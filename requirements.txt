@@ -1,0 +1,6 @@
+torch
+numpy
+Pillow
+requests
+opencv-python
+imageio

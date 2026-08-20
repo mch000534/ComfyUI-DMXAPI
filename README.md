@@ -35,7 +35,16 @@ cd /path/to/ComfyUI/custom_nodes/ComfyUI-DMXAPI
 
 ### 設定 API key
 
-最簡單的方式是在啟動 ComfyUI 前設定通用 key。請依照作業系統選擇對應指令。
+最簡單的方式是先複製範例檔，再填入 API key。ComfyUI-DMXAPI 啟動時會自動讀取與 `dmxapi_common.py` 同一層的 `.env`：
+
+```bash
+cp .env.example .env
+# 編輯 .env，填入你的 API key
+```
+
+可直接參考 [`.env.example`](.env.example) 的欄位。
+
+`.env` 是可選的；不存在時會維持原本的作業系統環境變數行為。若同一個變數同時存在於系統環境與 `.env`，系統環境變數優先。也可以不使用 `.env`，依照作業系統選擇以下指令。
 
 #### macOS
 
@@ -88,7 +97,7 @@ setx DMXAPI_KEY "sk-your-key"
 
 也可以在每個節點的 `api_key` 輸入欄位直接填入 key，或使用模型專屬環境變數。優先序與完整清單請見[設定檔說明](#設定檔說明)。
 
-本專案目前沒有 `.env.example`；請不要把真正的 API key 寫入 workflow、原始碼或 Git。
+請不要把真正的 `.env`、API key 寫入 workflow、原始碼或 Git；`.env.example` 只應保留空白或示範值。
 
 ### 啟動
 
@@ -174,7 +183,13 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 
 ## ⚙️ 設定檔說明
 
-目前沒有獨立設定檔；API key 透過節點輸入或環境變數提供。所有環境變數預設都是未設定。
+目前沒有獨立設定檔；API key 可透過節點輸入、作業系統環境變數或專案目錄的 `.env` 提供。所有變數預設都是未設定。
+
+`.env` 只會在套件載入時讀取一次，支援空白行、`#` 註解、`NAME=value`、`export NAME=value` 及單／雙引號。放置位置是：
+
+```text
+ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
+```
 
 | 環境變數 | 用途 | 優先序 |
 | --- | --- | --- |
@@ -233,7 +248,11 @@ PYTHONDONTWRITEBYTECODE=1 /path/to/ComfyUI/.venv/bin/python -c "import importlib
 
 ### 收到 401 或認證失敗
 
-確認 key 沒有多餘空白，並檢查節點 `api_key` 是否覆蓋了環境變數。若使用環境變數，請在啟動 ComfyUI 的同一個 shell 中設定它。不同端點的認證格式可能不同，程式會在 401 時自動嘗試另一種格式。
+確認 key 沒有多餘空白，並檢查節點 `api_key` 是否覆蓋了系統環境變數或 `.env`。若使用系統環境變數，請在啟動 ComfyUI 的同一個 shell 中設定它；修改 `.env` 後也必須重新啟動 ComfyUI。不同端點的認證格式可能不同，程式會在 401 時自動嘗試另一種格式。
+
+### `.env` 沒有生效
+
+確認檔案名稱正確、位置是 `custom_nodes/ComfyUI-DMXAPI/.env`，且內容使用 `NAME=value` 格式。ComfyUI 必須完全重新啟動，因為 `.env` 只在節點模組首次載入時讀取。
 
 ### 圖像生成逾時或連線被上游切斷
 

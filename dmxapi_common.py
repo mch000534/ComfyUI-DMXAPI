@@ -10,6 +10,7 @@ DMXAPI ComfyUI 節點共用工具
 import io
 import os
 import math
+import re
 import time
 import base64
 import logging
@@ -22,6 +23,74 @@ import torch
 from PIL import Image
 
 logger = logging.getLogger("DMXAPI")
+
+
+# ==================== 可選 .env ====================
+
+_DOTENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _parse_dotenv_line(line):
+    """解析一行簡單 .env 語法，回傳 (name, value) 或 None。"""
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+
+    if stripped.startswith("export "):
+        stripped = stripped[7:].lstrip()
+
+    if "=" not in stripped:
+        return None
+
+    name, value = stripped.split("=", 1)
+    name = name.strip()
+    if not _DOTENV_NAME.fullmatch(name):
+        return None
+
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1]
+    elif " #" in value or "\t#" in value:
+        value = re.split(r"\s+#", value, maxsplit=1)[0].rstrip()
+
+    return (name, value)
+
+
+def _load_dotenv(path=None):
+    """載入可選 .env；既有 process environment 變數優先。"""
+    default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    dotenv_path = os.fspath(path or default_path)
+    try:
+        with open(dotenv_path, "r", encoding="utf-8") as handle:
+            lines = list(handle)
+    except FileNotFoundError:
+        return 0
+    except OSError as error:
+        logger.warning("[DMXAPI] 無法讀取 .env（%s）：%s", dotenv_path, error)
+        return 0
+
+    loaded = 0
+    for line_number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        parsed = _parse_dotenv_line(line)
+        if parsed is None:
+            logger.warning("[DMXAPI] 忽略 .env 第 %s 行：格式無效。", line_number)
+            continue
+
+        name, value = parsed
+        if name not in os.environ:
+            os.environ[name] = value
+            loaded += 1
+
+    if loaded:
+        logger.info("[DMXAPI] 已從 .env 載入 %s 個環境變數。", loaded)
+    return loaded
+
+
+_load_dotenv()
 
 
 # ==================== 端點 ====================

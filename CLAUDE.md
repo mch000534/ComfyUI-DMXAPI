@@ -135,9 +135,9 @@ print('OK')"
 
 ### 與官方範本的介面對齊
 
-8 個影片節點的輸入命名一律跟著 ComfyUI 官方 H3 範本走，讓 DMXAPI 節點可以直接替換範本裡的本地推論子圖：`first_frame` / `last_frame` / `prompt` / `width` / `height` / `duration` / `noise_seed`。範本的 `unet_name`、`clip_name`、`vae_name`、`audio_vae` 是本地模型載入用的，API 版換成 `model` 與 `api_key`。
+整合的 `DMXAPI_MiniMax_Video` 直接對齊 ComfyUI 官方 H3 範本命名，可替換範本裡的本地推論子圖：`first_frame` / `last_frame` / `prompt` / `width` / `height` / `duration` / `noise_seed`。範本的 `unet_name`、`clip_name`、`vae_name`、`audio_vae` 是本地模型載入用的，API 版換成 `model` 與 `api_key`。
 
-MiniMax 與 Seedance 都使用上述欄位名稱。**新增節點時沿用這組命名**，不要再引入第三套。
+七個影片生成節點在適用時共用 `prompt` / `width` / `height` / `duration` / `noise_seed` 命名；以影格控制生成的節點使用 `first_frame` / `last_frame`。Seedance 的多模態參考、影片延長與影片編輯另有各自的圖片及影片 URL 欄位，不能視為與 H3 完全相同的介面。`DMXAPI_Seedance2_DownloadVideo` 是第八個影片節點，使用獨立的下載介面，不接收生成節點的 prompt、尺寸、時長或 seed 欄位。**新增生成節點時應沿用適用的共通命名，但專用輸入仍須清楚區分。**
 
 公開 MiniMax 介面只有 `DMXAPI_MiniMax_Video`，其 `model` widget 只提供 `MiniMax-H3`。不接影格時為文生影片；可接 `first_frame`，或同時接 `first_frame` 與 `last_frame`。只接 `last_frame` 必須在解析 API key 或提交任務前報錯。H3 payload 的 `model` 固定為 `MiniMax-H3`，圖片 role 沿用 `first_frame` / `last_frame`，不要讓舊 workflow 傳入的 model 值改變實際 payload。
 
@@ -161,7 +161,7 @@ MiniMax 的尺寸換算只使用 `H3_RESOLUTION_TIERS`；`MiniMaxVideoBase.resol
 
 ### 影片節點的統一契約
 
-所有 8 個影片節點都繼承 `common.DMXAPIVideoNodeBase`，輸出簽章完全相同，因此在畫布上可以互換接線：
+所有 8 個影片節點都繼承 `common.DMXAPIVideoNodeBase`，並共享相同的輸出簽章，因此下游輸出接線可以互換：
 
 ```python
 RETURN_NAMES = ("VIDEO", "IMAGE_FRAMES", "LAST_FRAME", "VIDEO_PATH", "VIDEO_URL", "TASK_ID")
@@ -169,20 +169,22 @@ RETURN_NAMES = ("VIDEO", "IMAGE_FRAMES", "LAST_FRAME", "VIDEO_PATH", "VIDEO_URL"
 
 第一槽的 `VIDEO` 與官方範本一致，可直接接內建 `SaveVideo` / `PreviewVideo`。它由 `common.to_video_output(path)` 以 `comfy_api` 的 `VideoFromFile` 包本地檔案產生；`comfy_api` 只有在 ComfyUI 進程內才 import 得到（冒煙測試是裸 Python 載入本套件），所以那裡是**延遲 import 且失敗回傳 None**，不要改成模組層級 import。
 
-共用輸入由 `common_inputs()` 產生：`download_video` / `max_frames` / `save_dir` / `poll_interval` / `max_wait`；尺寸與長度另由 `size_inputs()` 與 `duration_input()` 產生。收尾一律呼叫 `self.finish(...)`，由它決定是否落地成檔案：
+七個生成節點的共用輸入由 `common_inputs()` 產生：`download_video` / `max_frames` / `save_dir` / `poll_interval` / `max_wait`；尺寸與長度另由 `size_inputs()` 與 `duration_input()` 產生。生成節點收尾呼叫 `self.finish(...)`，由它決定是否落地成檔案。Seedance 下載節點自行宣告獨立輸入，但維持相同輸出簽章。
 
-- `download_video=False` → 只回 URL 與 task_id，**`VIDEO` 是 `None`**、IMAGE 槽填空白影格（會記一筆 warning）
-- `download_video=True` → 下載、解碼、回傳 VIDEO 與影格
+- `download_video=False` → 不下載影片，只回 URL 與 task_id；`VIDEO` 是 `None`，`IMAGE_FRAMES` 使用空白影格。若上游有 `last_frame_url`，`LAST_FRAME` 仍可使用該圖片，否則也為空白影格。
+- `download_video=True` → 下載影片並建立 `VIDEO` 與預覽；只有 `max_frames != 0` 才會解碼 `IMAGE_FRAMES`。
 
 `VIDEO` 需要本地檔案，所以 MiniMax H3 與 Seedance 生成節點的 `download_video` **一律預設 True**。相對地 `max_frames` 預設為 `0`——有 VIDEO 與內嵌預覽就不必把影格拉進記憶體，要後製再自行調高。
 
-`LAST_FRAME` 的取得優先序：上游給的 `last_frame_url` > 從下載的影片取末幀 > 空白影格。
+`LAST_FRAME` 的取得優先序：上游給的 `last_frame_url` > `max_frames != 0` 時已解碼影格的最後一幀 > 空白影格。`download_video=True` 只保證下載檔案；預設 `max_frames=0` 不會為了取得末幀而額外解碼。
 
 ### 下載節點
 
 只有 Seedance 提供公開的事後取件節點 `DMXAPI_Seedance2_DownloadVideo`，可用 `task_id` 或 `video_url` 下載影片。用途是 Seedance 生成當下關掉了 `download_video`、ComfyUI 中途重啟，或想跨工作流取回舊任務；它是 `OUTPUT_NODE = True`。
 
 只填 `video_url` 時不會發任何任務查詢請求，也不需要 api_key。
+
+MiniMax H3 目前沒有公開的事後取件節點。`DMXAPI_MiniMax_Video` 仍輸出 `TASK_ID`，但該 ID 無法透過另一個 MiniMax ComfyUI 節點事後取回影片；需要本地檔案時應在生成節點保持 `download_video=True`。
 
 ### 內嵌影片預覽
 

@@ -124,13 +124,13 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 
 ### 影片生成
 
-影片節點會執行「提交任務 → 輪詢狀態 → 取得影片 URL → 可選下載」流程。生成節點的共同輸入如下：
+影片生成節點會執行「提交任務 → 輪詢狀態 → 取得影片 URL → 可選下載」流程。生成節點的共同輸入如下：
 
 | 輸入 | 說明 |
 | --- | --- |
 | `width` / `height` | 用來換算上游的比例與解析度檔位，不代表一定輸出這個像素尺寸。 |
 | `duration` | 影片秒數；送給上游前會四捨五入為整數。一般範圍為 4–15 秒，Seedance 影片延長至少 8 秒。 |
-| `download_video` | 預設開啟。關閉時只取得 URL 與任務 ID，不會建立本地 `VIDEO` 檔案。 |
+| `download_video` | 預設開啟。開啟時下載本地檔案並建立 `VIDEO`；關閉時只取得 URL 與任務 ID。此設定本身不會要求解碼影格。 |
 | `max_frames` | `-1` 解碼全部影格；`0` 不解碼影格；大於 0 時最多解碼指定幀數。 |
 | `save_dir` | 影片保存目錄；留空時使用 ComfyUI `output` 目錄。 |
 | `poll_interval` | 輪詢間隔，預設 8 秒。 |
@@ -142,12 +142,12 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 | --- | --- |
 | `VIDEO` | 可接 ComfyUI 的 `SaveVideo` / `PreviewVideo`；需要 `download_video=True`。 |
 | `IMAGE_FRAMES` | 依 `max_frames` 解碼的影格 batch。 |
-| `LAST_FRAME` | 上游提供的末幀優先，否則取下載影片的末幀。 |
+| `LAST_FRAME` | 優先使用上游的 `last_frame_url`；否則只在 `max_frames != 0` 且確實解碼到影格時取最後一幀，再無則為空白影格。 |
 | `VIDEO_PATH` | 本地影片檔案路徑。 |
 | `VIDEO_URL` | DMXAPI 回傳的影片 URL。 |
 | `TASK_ID` | 非同步任務識別碼；Seedance 任務可交給其下載節點事後取件。 |
 
-高解析度影片請優先保持 `max_frames=0`。ComfyUI 的 `IMAGE` 是 `float32` tensor，4K 單張影格約 100 MB，整段影片全部解碼可能消耗數十 GB 記憶體。
+高解析度影片請優先保持 `max_frames=0`。此時即使 `download_video=True`、影片已保存到本地，也不會解碼 `IMAGE_FRAMES` 或從影片抽取 `LAST_FRAME`；除非上游另有提供 `last_frame_url`，否則兩者使用空白影格。ComfyUI 的 `IMAGE` 是 `float32` tensor，4K 單張影格約 100 MB，整段影片全部解碼可能消耗數十 GB 記憶體。
 
 ### 可用節點
 
@@ -163,6 +163,8 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 | 顯示名稱 | 用途 |
 | --- | --- |
 | `DMXAPI MiniMax 影片生成` | 唯一公開 MiniMax 節點，模型固定為 `MiniMax-H3`。不接影格時為文生影片；可接首幀，或同時接首幀與尾幀。只接 `last_frame` 會在送出請求前報錯。 |
+
+MiniMax H3 目前沒有公開的事後取件節點。生成節點仍會回傳 `TASK_ID`，但無法在另一個 MiniMax ComfyUI 節點中用該 ID 事後取回影片；如需本地影片，請在生成時保持 `download_video=True`。
 
 #### Seedance 2.0
 

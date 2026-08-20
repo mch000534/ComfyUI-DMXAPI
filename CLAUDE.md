@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 專案性質
 
-ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI 相容的第三方模型聚合閘道）的圖像／影片生成服務，共 13 個節點。
+ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI 相容的第三方模型聚合閘道）的圖像／影片生成服務，共 14 個節點。
 
 這是**純 API 客戶端**，不做任何本地推論。`torch` / `numpy` / `Pillow` 只用於 ComfyUI tensor 與 base64 之間的轉換，`opencv-python` / `imageio` 只用於影片抽幀。修改時不要引入本地模型載入邏輯。
 
@@ -65,6 +65,7 @@ print('OK')"
 | --- | --- |
 | [dmxapi_common.py](dmxapi_common.py) | **所有共用邏輯**：端點常數、Key 解析、HTTP 重試、輪詢迴圈、tensor 編解碼、影片下載與抽幀、影片節點基底類別 |
 | [dmxapi_gpt_image2_node.py](dmxapi_gpt_image2_node.py) | GPT Image 2 圖像生成（1 個節點） |
+| [dmxapi_agnes_image.py](dmxapi_agnes_image.py) | Agnes Image 2.1 Flash 圖像生成（1 個節點） |
 | [dmxapi_minimax_h3_nodes.py](dmxapi_minimax_h3_nodes.py) | MiniMax H3 / Hailuo-02 影片（5 個節點） |
 | [dmxapi_seedance2.py](dmxapi_seedance2.py) | 豆包 Seedance 2.0 影片（7 個節點） |
 
@@ -76,11 +77,33 @@ print('OK')"
 
 | 端點 | 使用者 | 型態 |
 | --- | --- | --- |
-| `POST /v1/images/generations` | gpt_image2（純文生圖） | 同步，OpenAI 相容 JSON，直接回傳 `data[].b64_json` 或 `url` |
+| `POST /v1/images/generations` | gpt_image2（純文生圖）、agnes | 同步，OpenAI 相容 JSON，直接回傳 `data[].b64_json` 或 `url` |
 | `POST /v1/images/edits` | gpt_image2（帶 `image` 時） | 同步，**multipart/form-data**，回傳格式同上 |
 | `POST /v1/responses` | minimax、seedance | 非同步，提交 → 輪詢 |
 
-**參考圖不能塞進 generations 的 payload**：上游會回 400 `Unknown parameter: 'image'`（實測確認）。`generations` 是純文生圖端點，圖生圖一律走 `edits`，而且圖是 multipart 的**檔案欄位**，不是 base64 字串——所以 `_submit_edit()` 用 `common.tensor_to_image_bytes()` 取原始 bytes 走 `common.post_multipart()`，不用 `tensor_to_data_url()`。`edits` 也不送 `response_format`，避免再吃一次 `unknown_parameter`；回傳由 `fetch_image_item()` 判讀（`b64_json` 與 `url` 都吃）。
+**gpt-image-2 的參考圖不能塞進 generations 的 payload**：上游會回 400 `Unknown parameter: 'image'`（實測確認）。（Agnes 是另一回事——它的參考圖走同一個端點的 `extra_body.image`，見下節。）`generations` 是純文生圖端點，圖生圖一律走 `edits`，而且圖是 multipart 的**檔案欄位**，不是 base64 字串——所以 `_submit_edit()` 用 `common.tensor_to_image_bytes()` 取原始 bytes 走 `common.post_multipart()`，不用 `tensor_to_data_url()`。`edits` 也不送 `response_format`，避免再吃一次 `unknown_parameter`；回傳由 `fetch_image_item()` 判讀（`b64_json` 與 `url` 都吃）。
+
+### Agnes Image 2.1 Flash 的參數事實（依官方文件）
+
+文件：[文生圖](https://doc.dmxapi.cn/agnes-image-21-flash-t2i.html)、[圖生圖](https://doc.dmxapi.cn/agnes-image-21-flash-i2i.html)。
+
+跟 gpt-image-2 同樣打 `/v1/images/generations`，但**協定細節完全不同**，不要把兩邊的
+寫法互相套用：
+
+- **文生圖與圖生圖是同一個端點**，差別只在有沒有帶 `extra_body.image`。這裡**不存在
+  `/v1/images/edits` 那條路**，也不用 multipart——參考圖是 JSON 裡的 data URI 字串陣列。
+- **`image` 與 `response_format` 都必須包在 `extra_body` 裡**，放到請求體頂層會被上游拒絕
+  （官方文件明文標注）。`response_format` 上游預設 `url`，`b64_json` 也吃，兩者都由
+  `fetch_image_item()` 判讀。
+- **`size` 是解析度檔位（`1K` / `2K` / `3K` / `4K`）而不是像素尺寸**，寬高比另由 `ratio`
+  指定（`1:1` / `3:4` / `4:3` / `16:9` / `9:16` / `2:3` / `3:2` / `21:9`，預設 `1:1`）。
+  兩者的組合決定實際輸出尺寸，對照表抄在節點的 `DIMENSIONS` 常數裡，只用於 log 提示。
+- **`agnes-image-2.0-flash` 的參數與 2.1 不相容**：2.0 收的是 `1024x768` 這種像素字串且
+  沒有 `ratio`。要加 2.0 就開新節點，不要塞進同一個 model 下拉。
+- `image` 是陣列，多張即「多圖合成」。節點把 IMAGE batch 逐張編碼送出，超過
+  `MAX_REFERENCE_IMAGES`（5）會截斷並示警。
+- 官方建議客戶端逾時抓 60~360 秒，因此節點依 `size` 分兩段（1K/2K 180 秒、3K/4K 300 秒），
+  不是共用 `DEFAULT_TIMEOUT`。
 
 ### gpt-image-2 的參數事實（依官方文件）
 
@@ -218,6 +241,7 @@ Key 的解析優先序：**節點輸入 > `DMXAPI_KEY` > 模組專屬環境變�
 | 模組 | 專屬後援 |
 | --- | --- |
 | gpt_image2 | `OPENAI_API_KEY` |
+| agnes | `AGNES_API_KEY` |
 | minimax | `MINIMAX_API_KEY` |
 | seedance | `SEEDANCE_API_KEY`、`ARK_API_KEY` |
 

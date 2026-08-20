@@ -5,11 +5,13 @@ ComfyUI-DMXAPI 節點註冊
 NODE_DISPLAY_NAME_MAPPINGS，務必一併加進下方的 _MODULES，否則節點不會載入。
 """
 
+from . import dmxapi_agnes_image
 from . import dmxapi_gpt_image2_node
 from . import dmxapi_minimax_h3_nodes
 from . import dmxapi_seedance2
 
 _MODULES = [
+    dmxapi_agnes_image,
     dmxapi_gpt_image2_node,
     dmxapi_minimax_h3_nodes,
     dmxapi_seedance2,

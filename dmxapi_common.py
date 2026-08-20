@@ -105,7 +105,7 @@ RESPONSES_URL = BASE_HOST + "/v1/responses"
 
 
 # ==================== 選項清單 ====================
-# 各家上游的解析度字彙不同（MiniMax 用 768P/2K，Seedance 用 720p/4k），
+# 各家上游的解析度字彙不同（MiniMax H3 用 768P/2K，Seedance 用 720p/4k），
 # 不能混用，因此按家族分開定義，但排列一律由低到高。
 
 MINIMAX_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
@@ -113,11 +113,8 @@ MINIMAX_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
 # 解析度檔位：{上游名稱: 對應的短邊像素}。節點層收的是 width / height，
 # 由 resolution_from_size() 以短邊挑最接近的檔位換算成這裡的名稱。
 #
-# 兩個 MiniMax 系列接受的檔位不同，混用會被上游以 400 擋下：
-#   H3 送 512P 會回 'resolution must be "768P" or "2K"'（實測確認）
-# 因此換算時務必傳入該系列自己的檔位表，不要合成聯集。
+# MiniMax H3 只接受 768P/2K；送出前固定使用這個檔位表。
 H3_RESOLUTION_TIERS = {"768P": 768, "2K": 1440}
-HAILUO_RESOLUTION_TIERS = {"512P": 512, "768P": 768, "1080P": 1080}
 SEEDANCE_RESOLUTION_TIERS = {"480p": 480, "720p": 720, "1080p": 1080, "4k": 2160}
 
 SEEDANCE_RATIOS = ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]

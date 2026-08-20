@@ -119,6 +119,31 @@ class MiniMaxSimplificationTests(unittest.TestCase):
             self._generate_without_frames(node, model="MiniMax-Hailuo-02")
         node.run_task.assert_not_called()
 
+    def test_reference_removed_model_fails_before_api_work(self):
+        node = MINIMAX.DMXAPI_MiniMax_Reference2V()
+        node.resolve_key = Mock(side_effect=AssertionError("API key resolution reached"))
+        node.run_task = Mock(side_effect=AssertionError("API submission reached"))
+
+        with self.assertRaisesRegex(ValueError, "MiniMax-H3"):
+            node.generate(
+                prompt="test",
+                width=1344,
+                height=768,
+                duration=5.0,
+                noise_seed=0,
+                model="MiniMax-Hailuo-02",
+                api_key="unused",
+                prompt_optimizer=True,
+                download_video=False,
+                max_frames=0,
+                save_dir="",
+                poll_interval=8,
+                max_wait=60,
+            )
+
+        node.resolve_key.assert_not_called()
+        node.run_task.assert_not_called()
+
     def test_unregistered_reference_path_uses_h3_signatures_offline(self):
         node = MINIMAX.DMXAPI_MiniMax_Reference2V()
         node.resolve_key = Mock(return_value="token")

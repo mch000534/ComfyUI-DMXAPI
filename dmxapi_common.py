@@ -365,7 +365,7 @@ def poll_task(payload, parse, token, label="任務", poll_interval=8, max_wait=9
               request_timeout=60, max_consecutive_errors=20, url=RESPONSES_URL):
     """統一的輪詢迴圈。
 
-    三個家族的狀態欄位與字串各不相同（H3 用 succeeded、Hailuo 用 Success、
+    H3 與 Seedance 的狀態欄位和回應結構不同（H3 用 succeeded，
     Seedance 還多包一層 JSON 字串），因此把解析交給 parse 回呼，這裡只負責
     計時、間隔、容錯與錯誤訊息格式。
 

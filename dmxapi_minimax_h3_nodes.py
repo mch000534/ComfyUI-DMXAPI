@@ -45,6 +45,13 @@ def _parse_h3(data):
 class MiniMaxVideoBase(DMXAPIVideoNodeBase):
     """MiniMax H3 的提交與輪詢流程。"""
 
+    def validate_model(self, model):
+        if model != MINIMAX_MODEL:
+            raise ValueError(
+                "[DMXAPI Error] MiniMax 目前只支援 MiniMax-H3，"
+                "請更新舊 workflow 的 model。"
+            )
+
     def resolve_key(self, api_key):
         return resolve_api_key(api_key, "MINIMAX_API_KEY")
 
@@ -155,11 +162,7 @@ class DMXAPI_MiniMax_Video(MiniMaxVideoBase):
     def generate(self, prompt, width, height, duration, noise_seed, model, api_key,
                  prompt_optimizer, download_video, max_frames, save_dir, poll_interval, max_wait,
                  first_frame=None, last_frame=None):
-        if model != MINIMAX_MODEL:
-            raise ValueError(
-                "[DMXAPI Error] MiniMax 目前只支援 MiniMax-H3，"
-                "請更新舊 workflow 的 model。"
-            )
+        self.validate_model(model)
         if last_frame is not None and first_frame is None:
             raise ValueError("[DMXAPI Error] 使用 last_frame 時必須同時提供 first_frame。")
         if first_frame is None and not prompt.strip():
@@ -195,6 +198,7 @@ class DMXAPI_MiniMax_Reference2V(MiniMaxVideoBase):
     def generate(self, prompt, width, height, duration, noise_seed, model, api_key,
                  prompt_optimizer, download_video, max_frames, save_dir, poll_interval, max_wait,
                  character_image=None, style_image=None, audio_url=""):
+        self.validate_model(model)
         ratio, resolution = self.resolve_size(width, height)
         token = self.resolve_key(api_key)
         payload = self.build_h3_payload(

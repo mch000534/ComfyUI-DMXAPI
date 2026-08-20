@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 專案性質
 
-ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI 相容的第三方模型聚合閘道）的圖像／影片生成服務，共 14 個節點。
+ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI 相容的第三方模型聚合閘道）的圖像／影片生成服務，共 10 個節點：2 個圖像節點與 8 個影片節點。
 
 這是**純 API 客戶端**，不做任何本地推論。`torch` / `numpy` / `Pillow` 只用於 ComfyUI tensor 與 base64 之間的轉換，`opencv-python` / `imageio` 只用於影片抽幀。修改時不要引入本地模型載入邏輯。
 
@@ -14,7 +14,7 @@ ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI �
 
 Python 環境是 `/Users/barry/Documents/ComfyUI/.venv`（3.12.11）。**不要用系統 `python3`**（3.14，沒有 torch）。
 
-本專案沒有測試框架、建置或 lint 設定。開發循環是：改檔 → 重啟 ComfyUI → 在畫布上實測。
+本專案使用標準庫 `unittest` 執行離線回歸測試，沒有獨立建置或 lint 設定。開發循環是：改檔 → 跑離線測試與檢查 → 重啟 ComfyUI → 在畫布上實測。
 
 ```bash
 VENV=/Users/barry/Documents/ComfyUI/.venv/bin/python
@@ -24,6 +24,9 @@ $VENV -m pip install -r requirements.txt
 
 # 語法檢查
 $VENV -m py_compile *.py
+
+# 離線回歸測試
+PYTHONDONTWRITEBYTECODE=1 $VENV -m unittest discover -s tests -v
 
 # 冒煙測試：確認節點註冊（目錄名含連字號，無法直接 import，須用 spec 載入）
 $VENV -c "
@@ -66,7 +69,7 @@ print('OK')"
 | [dmxapi_common.py](dmxapi_common.py) | **所有共用邏輯**：端點常數、Key 解析、HTTP 重試、輪詢迴圈、tensor 編解碼、影片下載與抽幀、影片節點基底類別 |
 | [dmxapi_gpt_image2_node.py](dmxapi_gpt_image2_node.py) | GPT Image 2 圖像生成（1 個節點） |
 | [dmxapi_agnes_image.py](dmxapi_agnes_image.py) | Agnes Image 2.1 Flash 圖像生成（1 個節點） |
-| [dmxapi_minimax_h3_nodes.py](dmxapi_minimax_h3_nodes.py) | MiniMax H3 / Hailuo-02 影片（5 個節點） |
+| [dmxapi_minimax_h3_nodes.py](dmxapi_minimax_h3_nodes.py) | MiniMax H3 影片（1 個已註冊節點）；`DMXAPI_MiniMax_Reference2V` 類別刻意不註冊，等待後續重構 |
 | [dmxapi_seedance2.py](dmxapi_seedance2.py) | 豆包 Seedance 2.0 影片（7 個節點） |
 
 **節點模組不應自行組 headers、自行寫重試迴圈、自行做 base64 編碼或自行輪詢**——這些一律走 `dmxapi_common`。新增節點時先看共用模組有沒有現成的東西。
@@ -113,29 +116,30 @@ print('OK')"
 - **模型變體**：`gpt-image-2`、`gpt-image-2-ssvip`（官方標示「更穩定的服務品質和更快的回應速度」）、`gpt-image-2-03`。**`gpt-image-2-03` 只支援 `n=1`**，其餘變體 1~10；節點的 `batch_size` 上限是 4，遇到 `-03` 會夾成 1 並記 warning（`SINGLE_IMAGE_ONLY_MODELS`）。
 - **`edits` 的 `image` 其實支援多張與公網 URL**，目前節點只送 batch 第一張，多張時記 warning。要做多參考圖時從這裡下手。
 - 其他未接的參數：`background`、`output_format`（`png` / `jpeg` / `webp`）、`output_compression`。
-- **沒有非同步模式**：DMXAPI 只有 Flux、Midjourney、可靈、海螺提供提交／查詢任務的接口，gpt-image 系列沒有 `task_id` 或 `callback_url`，所以同步的 60 秒上限**沒有繞路可走**，只能靠 quality / 模型 / 尺寸 / prompt 長度把生成時間壓進去。新增節點前不要再花時間找非同步端點。
+- **沒有非同步模式**：gpt-image 系列沒有 `task_id` 或 `callback_url`，所以同步的 60 秒上限**沒有繞路可走**，只能靠 quality / 模型 / 尺寸 / prompt 長度把生成時間壓進去。新增節點前不要再花時間找非同步端點。
 
 `quality` 的下拉**刻意擺在 `INPUT_TYPES` 最後**，不要為了排版把它移到中間——既有 workflow 的 `widgets_values` 是依位置存的，插在中間會讓舊檔的值整排錯位。
 
 `post_json()` 與 `post_multipart()` 共用同一個 `_post()` 迴圈，因此重試策略與認證探測完全一致。差別只在標頭：帶 `files` 時 `build_headers()` **不設 `Content-Type`**，交給 requests 產生含 boundary 的那一行。multipart 的 `files` 值一律傳 bytes，不要傳開啟的檔案物件——重試時串流已經讀完了。
 
-`/v1/responses` 是**單一端點多工**：提交、查詢、取檔都 POST 到同一個 URL，靠 payload 裡的 `model` 欄位區分動作（`MiniMax-H3-get`、`seedance-2-0-get`⋯）。理解這點是讀懂本專案的關鍵——「查詢狀態」不是 GET 某個 task URL，而是換個 `model` 名字再 POST 一次。
+`/v1/responses` 是**單一端點多工**：MiniMax H3 與 Seedance 的提交和輪詢都 POST 到同一個 URL，靠 payload 裡的 `model` 欄位區分動作。目前查詢動作只有 `MiniMax-H3-get` 與 `seedance-2-0-get`。理解這點是讀懂本專案的關鍵——「查詢狀態」不是 GET 某個 task URL，而是換個 `model` 名字再 POST 一次。
 
-### 三套非同步協定
+### 兩套非同步協定
 
 輪詢的**迴圈骨架已統一**在 `common.poll_task()`（計時、間隔、容錯、錯誤訊息格式），但各家的狀態欄位與字串是上游決定的，無法統一，因此透過 `parse` 回呼分別處理。`parse(data)` 回傳 `(state, value)`，`state` 為 `"done"` / `"pending"` / `"failed"`。
 
 1. **MiniMax H3**（`_parse_h3`）：提交 → `task_id` → `model=MiniMax-H3-get` 輪詢 → `task.status == "succeeded"` → 影片在 `task.content.url`。
-2. **MiniMax Hailuo-02**（`_parse_hailuo`）：**三段式**。提交 → `task_id` → `model=MiniMax-Hailuo-query` 輪詢 → `status == "Success"` 取得 `file_id` → 再 `model=MiniMax-Hailuo-get` 換 `file.download_url`。
-3. **Seedance 2.0**（`_parse_seedance`）：提交回傳的 key 是 **`id`** 而非 `task_id`；輪詢結果**多包一層 JSON 字串**——真正的狀態在 `data["output"][0]["content"][0]["text"]`，必須再 `json.loads()` 一次。解析失敗視為「仍在排隊」而繼續輪詢，不是錯誤。
+2. **Seedance 2.0**（`_parse_seedance`）：提交回傳的 key 是 **`id`** 而非 `task_id`；輪詢結果**多包一層 JSON 字串**——真正的狀態在 `data["output"][0]["content"][0]["text"]`，必須再 `json.loads()` 一次。解析失敗視為「仍在排隊」而繼續輪詢，不是錯誤。
 
-狀態字串大小寫各家不同（H3 小寫 `succeeded`、Hailuo 首字大寫 `Success`、Seedance 小寫 `succeeded`），這是上游的事實，不要「順手統一」。
+兩套協定的成功狀態目前都使用小寫 `succeeded`，但回應結構不同，不要因此合併解析器。
 
 ### 與官方範本的介面對齊
 
-12 個影片節點的輸入命名一律跟著 ComfyUI 官方 H3 範本走，讓 DMXAPI 節點可以直接替換範本裡的本地推論子圖：`first_frame` / `last_frame` / `prompt` / `width` / `height` / `duration` / `noise_seed`。範本的 `unet_name`、`clip_name`、`vae_name`、`audio_vae` 是本地模型載入用的，API 版換成 `model` 與 `api_key`。
+8 個影片節點的輸入命名一律跟著 ComfyUI 官方 H3 範本走，讓 DMXAPI 節點可以直接替換範本裡的本地推論子圖：`first_frame` / `last_frame` / `prompt` / `width` / `height` / `duration` / `noise_seed`。範本的 `unet_name`、`clip_name`、`vae_name`、`audio_vae` 是本地模型載入用的，API 版換成 `model` 與 `api_key`。
 
-MiniMax 舊的 `first_frame_image` / `last_frame_image` 與 Seedance 舊的 `seed` 都已改成上述名稱。**新增節點時沿用這組命名**，不要再引入第三套。
+MiniMax 與 Seedance 都使用上述欄位名稱。**新增節點時沿用這組命名**，不要再引入第三套。
+
+公開 MiniMax 介面只有 `DMXAPI_MiniMax_Video`，其 `model` widget 只提供 `MiniMax-H3`。不接影格時為文生影片；可接 `first_frame`，或同時接 `first_frame` 與 `last_frame`。只接 `last_frame` 必須在解析 API key 或提交任務前報錯。H3 payload 的 `model` 固定為 `MiniMax-H3`，圖片 role 沿用 `first_frame` / `last_frame`，不要讓舊 workflow 傳入的 model 值改變實際 payload。
 
 ### 尺寸：節點收 width/height，API 收檔位
 
@@ -149,18 +153,15 @@ MiniMax 舊的 `first_frame_image` / `last_frame_image` 與 Seedance 舊的 `see
 | 常數 | 內容 |
 | --- | --- |
 | `H3_RESOLUTION_TIERS` | `768P`=768、`2K`=1440 |
-| `HAILUO_RESOLUTION_TIERS` | `512P`=512、`768P`=768、`1080P`=1080 |
 | `SEEDANCE_RESOLUTION_TIERS` | `480p`=480、`720p`=720、`1080p`=1080、`4k`=2160 |
 
-**MiniMax 兩系列的檔位不通用**（上游實測 400 `dmxapi_invalid_value`：H3 送 `512P` 會回 `resolution must be "768P" or "2K"`）。`MiniMaxVideoBase.resolve_size(model, width, height)` 依 model 查自己的表，因此組不出上游不接受的組合——舊的聯集清單 `MINIMAX_RESOLUTIONS` 與 `validate_resolution()` 已因此移除。新增跨系列節點時照樣走 `resolve_size()`，不要自己拼檔位。
-
-另注意 `ratio` 只有 H3 payload 會送，`build_hailuo_payload()` 完全不帶——Hailuo-02 的畫面比例跟隨首幀，`I2V` 節點的寬高只用來決定解析度檔位。
+MiniMax 的尺寸換算只使用 `H3_RESOLUTION_TIERS`；`MiniMaxVideoBase.resolve_size(width, height)` 同時選出 H3 的 `ratio` 與解析度檔位。H3 payload 必須同時送出這兩個欄位，不要自行拼接未定義的檔位。
 
 `duration` 也對齊範本改成 **FLOAT 秒數**，送出前由 `duration_seconds()` 四捨五入成整數秒並夾在合法區間（超界會記 warning）。
 
 ### 影片節點的統一契約
 
-所有 12 個影片節點都繼承 `common.DMXAPIVideoNodeBase`，輸出簽章完全相同，因此在畫布上可以互換接線：
+所有 8 個影片節點都繼承 `common.DMXAPIVideoNodeBase`，輸出簽章完全相同，因此在畫布上可以互換接線：
 
 ```python
 RETURN_NAMES = ("VIDEO", "IMAGE_FRAMES", "LAST_FRAME", "VIDEO_PATH", "VIDEO_URL", "TASK_ID")
@@ -173,21 +174,19 @@ RETURN_NAMES = ("VIDEO", "IMAGE_FRAMES", "LAST_FRAME", "VIDEO_PATH", "VIDEO_URL"
 - `download_video=False` → 只回 URL 與 task_id，**`VIDEO` 是 `None`**、IMAGE 槽填空白影格（會記一筆 warning）
 - `download_video=True` → 下載、解碼、回傳 VIDEO 與影格
 
-`VIDEO` 需要本地檔案，所以 `download_video` 兩家**一律預設 True**（Seedance 原本預設 False 的慣例已隨 VIDEO 輸出取消）。相對地 `max_frames` 預設改為 `0`——有 VIDEO 與內嵌預覽就不必把影格拉進記憶體，要後製再自行調高。
+`VIDEO` 需要本地檔案，所以 MiniMax H3 與 Seedance 生成節點的 `download_video` **一律預設 True**。相對地 `max_frames` 預設為 `0`——有 VIDEO 與內嵌預覽就不必把影格拉進記憶體，要後製再自行調高。
 
 `LAST_FRAME` 的取得優先序：上游給的 `last_frame_url` > 從下載的影片取末幀 > 空白影格。
 
 ### 下載節點
 
-兩家各有一個以 `task_id` 或 `video_url` 事後取件的節點：`DMXAPI_MiniMax_DownloadVideo` 與 `DMXAPI_Seedance2_DownloadVideo`。用途是生成當下關掉了 `download_video`、ComfyUI 中途重啟、或想跨工作流取回舊任務。兩者都是 `OUTPUT_NODE = True`。
+只有 Seedance 提供公開的事後取件節點 `DMXAPI_Seedance2_DownloadVideo`，可用 `task_id` 或 `video_url` 下載影片。用途是 Seedance 生成當下關掉了 `download_video`、ComfyUI 中途重啟，或想跨工作流取回舊任務；它是 `OUTPUT_NODE = True`。
 
-MiniMax 版多一個 `series` 下拉（`auto` / `H3` / `Hailuo-02`），因為兩系列的查詢協定不同。`auto` 靠 `detect_series()` 探測：先打 `MiniMax-H3-get`，回應帶 `task` 物件即 H3；否則打 `MiniMax-Hailuo-query`，帶 `status` 字串即 Hailuo。探測會多花一次往返，已知系列時直接指定較快。
-
-只填 `video_url` 時兩個節點都不會發任何查詢請求，也就不需要 api_key。
+只填 `video_url` 時不會發任何任務查詢請求，也不需要 api_key。
 
 ### 內嵌影片預覽
 
-`finish()` 與兩個下載節點都會回傳 `{"ui": ..., "result": ...}`，`ui` 由 `common.build_video_preview(path)` 產生，格式與 ComfyUI 內建 `SaveVideo` 一致：
+`finish()` 與 Seedance 下載節點都會回傳 `{"ui": ..., "result": ...}`，`ui` 由 `common.build_video_preview(path)` 產生，格式與 ComfyUI 內建 `SaveVideo` 一致：
 
 ```python
 {"images": [{"filename": ..., "subfolder": ..., "type": "output"}], "animated": (True,)}

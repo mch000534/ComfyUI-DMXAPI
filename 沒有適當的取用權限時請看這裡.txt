@@ -1,0 +1,15 @@
+這不是檔案壞掉。
+
+macOS 雙擊 .command 一定要有「執行權限」。用 AirDrop、郵件、微信、瀏覽器下載時，這個權限常常會消失，所以會出現「沒有適當的取用權限」。Finder 的「顯示簡介」改讀寫也修不好。
+
+請改用下面其中一種方式：
+
+1. 雙擊「install_DMXAPI_node_NOgit.app」
+   （Finder 可能顯示為「安裝 ComfyUI-DMXAPI」）
+   第一次若被擋，按 Control 點它 → 打開 → 打開。
+
+2. 只有 .command 時，打開「終端機」，把檔案拖進去，
+   在路徑最前面加上「zsh 」（zsh 後面有一個空格）再按 Enter。
+
+   例如：
+   zsh ~/Downloads/install_DMXAPI_node_NOgit.command

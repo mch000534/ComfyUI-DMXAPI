@@ -5,7 +5,7 @@
 """
 
 from .dmxapi_common import (
-    H3_RESOLUTION_TIERS,
+    H3_RESOLUTIONS,
     MINIMAX_RATIOS,
     RESPONSES_URL,
     DMXAPIVideoNodeBase,
@@ -13,8 +13,6 @@ from .dmxapi_common import (
     logger,
     poll_task,
     post_json,
-    ratio_from_size,
-    resolution_from_size,
     resolve_api_key,
     tensor_to_data_url,
 )
@@ -59,18 +57,6 @@ class MiniMaxVideoBase(DMXAPIVideoNodeBase):
         # 影片首尾幀用 JPEG，避免 base64 PNG 撐爆請求體積
         return tensor_to_data_url(tensor, fmt="JPEG", quality=95)
 
-    def resolve_size(self, width, height):
-        """width / height → H3 接受的 (ratio, resolution)。"""
-        ratio = ratio_from_size(width, height, MINIMAX_RATIOS)
-        resolution = resolution_from_size(
-            width, height, H3_RESOLUTION_TIERS, default="768P"
-        )
-        logger.info(
-            "[DMXAPI] %s %sx%s → ratio=%s resolution=%s",
-            MINIMAX_MODEL, width, height, ratio, resolution,
-        )
-        return (ratio, resolution)
-
     def submit(self, payload, token, label):
         data = post_json(RESPONSES_URL, payload, token, timeout=60)
         task_id = str(data.get("task_id") or data.get("id") or "")
@@ -95,7 +81,11 @@ class MiniMaxVideoBase(DMXAPIVideoNodeBase):
 
     def build_h3_payload(self, prompt, ratio, resolution, duration, prompt_optimizer,
                          noise_seed=0, images=()):
-        """images 為 (role, tensor) 序列，例如 ("first_frame", t)。"""
+        """images 為 (role, tensor) 序列，例如 ("first_frame", t)。
+
+        ``ratio`` 只在**文生影片**（input 只有 text）時送出；一旦帶了參考圖，
+        上游的比例恆為 ``adaptive``（跟隨圖片），送任何值都會被忽略，因此直接省略。
+        """
         items = [{"type": "text", "text": prompt}]
         for role, tensor in images:
             if tensor is None:
@@ -111,25 +101,46 @@ class MiniMaxVideoBase(DMXAPIVideoNodeBase):
             "input": items,
             "resolution": resolution,
             "duration": duration_seconds(duration),
-            "ratio": ratio,
             "prompt_optimizer": prompt_optimizer,
             "aigc_watermark": False,
         }
+
+        # 帶參考圖時上游比例恆為 adaptive，送 ratio 只會被忽略，索性不送。
+        if len(items) > 1:
+            logger.info(
+                "[DMXAPI] %s resolution=%s（帶參考圖，比例跟隨圖片，不送 ratio）",
+                MINIMAX_MODEL, resolution,
+            )
+        else:
+            payload["ratio"] = ratio
+            logger.info(
+                "[DMXAPI] %s resolution=%s ratio=%s",
+                MINIMAX_MODEL, resolution, ratio,
+            )
         if noise_seed and noise_seed > 0:
             payload["seed"] = int(noise_seed)
         return payload
 
 # ==================== 節點 ====================
 
-def _minimax_inputs(width=1344, height=768):
-    """組出與官方 H3 範本同名同序的輸入：prompt / width / height / duration / noise_seed。
+def _minimax_inputs():
+    """組出 H3 的輸入：prompt / resolution / ratio / duration / noise_seed。
 
+    上游只收 ``resolution`` 與 ``ratio`` 兩個列舉欄位，不接受任意像素尺寸，
+    因此這裡**不提供 width / height**——收像素尺寸只會讓人誤以為能指定輸出解析度。
     範本的 unet/clip/vae 是本地推論用的，API 版換成 model 與 api_key。
     """
     required = {
         "prompt": ("STRING", {"multiline": True, "default": ""}),
+        "resolution": (H3_RESOLUTIONS, {
+            "default": H3_RESOLUTIONS[0],
+            "tooltip": "上游解析度檔位；2K 較貴也較慢",
+        }),
+        "ratio": (MINIMAX_RATIOS, {
+            "default": MINIMAX_RATIOS[0],
+            "tooltip": "畫面比例。只在文生影片時生效；帶 first_frame / last_frame 時比例跟隨圖片",
+        }),
     }
-    required.update(DMXAPIVideoNodeBase.size_inputs(width, height))
     required.update(DMXAPIVideoNodeBase.duration_input())
     required.update({
         "noise_seed": ("INT", {
@@ -145,7 +156,7 @@ def _minimax_inputs(width=1344, height=768):
 
 
 class DMXAPI_MiniMax_Video(MiniMaxVideoBase):
-    """H3 整合節點：支援文生、首幀與首尾幀生成。"""
+    """H3 整合節點：支援文生、首幀、尾幀與首尾幀生成。"""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -159,16 +170,15 @@ class DMXAPI_MiniMax_Video(MiniMaxVideoBase):
 
     FUNCTION = "generate"
 
-    def generate(self, prompt, width, height, duration, noise_seed, model, api_key,
+    def generate(self, prompt, resolution, ratio, duration, noise_seed, model, api_key,
                  prompt_optimizer, download_video, max_frames, save_dir, poll_interval, max_wait,
                  first_frame=None, last_frame=None):
         self.validate_model(model)
-        if last_frame is not None and first_frame is None:
-            raise ValueError("[DMXAPI Error] 使用 last_frame 時必須同時提供 first_frame。")
-        if first_frame is None and not prompt.strip():
+        # 上游支援四種組合：純文字、first_frame、last_frame、first_frame + last_frame。
+        # 只接 last_frame 是合法的「尾幀生成」，不要再擋。
+        if first_frame is None and last_frame is None and not prompt.strip():
             raise ValueError("[DMXAPI Error] 文生影片模式下 Prompt 不能為空。")
 
-        ratio, resolution = self.resolve_size(width, height)
         token = self.resolve_key(api_key)
         payload = self.build_h3_payload(
             prompt, ratio, resolution, duration, prompt_optimizer, noise_seed,
@@ -195,11 +205,10 @@ class DMXAPI_MiniMax_Reference2V(MiniMaxVideoBase):
 
     FUNCTION = "generate"
 
-    def generate(self, prompt, width, height, duration, noise_seed, model, api_key,
+    def generate(self, prompt, resolution, ratio, duration, noise_seed, model, api_key,
                  prompt_optimizer, download_video, max_frames, save_dir, poll_interval, max_wait,
                  character_image=None, style_image=None, audio_url=""):
         self.validate_model(model)
-        ratio, resolution = self.resolve_size(width, height)
         token = self.resolve_key(api_key)
         payload = self.build_h3_payload(
             prompt, ratio, resolution, duration, prompt_optimizer, noise_seed,

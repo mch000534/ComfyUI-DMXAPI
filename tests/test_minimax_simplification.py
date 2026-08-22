@@ -89,8 +89,8 @@ class MiniMaxSimplificationTests(unittest.TestCase):
     def _generate_without_frames(self, node, model="MiniMax-H3", last_frame=None):
         return node.generate(
             prompt="test",
-            width=1344,
-            height=768,
+            resolution="768P",
+            ratio="16:9",
             duration=5.0,
             noise_seed=0,
             model=model,
@@ -105,11 +105,46 @@ class MiniMaxSimplificationTests(unittest.TestCase):
             last_frame=last_frame,
         )
 
-    def test_last_frame_without_first_frame_fails_before_submit(self):
+    def test_last_frame_alone_is_submitted_as_tail_frame(self):
+        """上游支援「只給尾幀」，節點不得再擋下這個組合。"""
         node = MINIMAX.DMXAPI_MiniMax_Video()
+        node.resolve_key = Mock(return_value="token")
+        node.encode_image = Mock(return_value="data:image/jpeg;base64,AAAA")
+        node.run_task = Mock(
+            return_value=("https://example.invalid/video.mp4", "task")
+        )
+        node.finish = Mock(return_value="finished")
+
+        result = self._generate_without_frames(node, last_frame=object())
+
+        self.assertEqual(result, "finished")
+        payload = node.run_task.call_args.args[0]
+        roles = [item.get("role") for item in payload["input"]]
+        self.assertEqual(roles, [None, "last_frame"])
+        # 帶參考圖時比例由圖片決定，ratio 不應出現在 payload 裡
+        self.assertNotIn("ratio", payload)
+
+    def test_text_only_still_requires_prompt(self):
+        node = MINIMAX.DMXAPI_MiniMax_Video()
+        node.resolve_key = Mock(side_effect=AssertionError("API key resolution reached"))
         node.run_task = Mock(side_effect=AssertionError("API submission reached"))
-        with self.assertRaisesRegex(ValueError, "last_frame|尾幀"):
-            self._generate_without_frames(node, last_frame=object())
+        with self.assertRaisesRegex(ValueError, "Prompt"):
+            node.generate(
+                prompt="   ",
+                resolution="768P",
+                ratio="16:9",
+                duration=5.0,
+                noise_seed=0,
+                model="MiniMax-H3",
+                api_key="unused",
+                prompt_optimizer=True,
+                download_video=False,
+                max_frames=0,
+                save_dir="",
+                poll_interval=8,
+                max_wait=60,
+            )
+        node.resolve_key.assert_not_called()
         node.run_task.assert_not_called()
 
     def test_removed_model_value_fails_before_submit(self):
@@ -127,8 +162,8 @@ class MiniMaxSimplificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "MiniMax-H3"):
             node.generate(
                 prompt="test",
-                width=1344,
-                height=768,
+                resolution="768P",
+                ratio="16:9",
                 duration=5.0,
                 noise_seed=0,
                 model="MiniMax-Hailuo-02",
@@ -154,8 +189,8 @@ class MiniMaxSimplificationTests(unittest.TestCase):
 
         result = node.generate(
             prompt="test",
-            width=1344,
-            height=768,
+            resolution="768P",
+            ratio="16:9",
             duration=5.0,
             noise_seed=0,
             model="MiniMax-H3",

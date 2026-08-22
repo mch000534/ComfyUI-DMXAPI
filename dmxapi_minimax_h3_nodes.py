@@ -145,11 +145,16 @@ def _minimax_inputs():
     required.update({
         "noise_seed": ("INT", {
             "default": 0, "min": 0, "max": 0xffffffffffffffff,
-            "tooltip": "0 = 不指定 seed，交由上游隨機",
+            "tooltip": "實測 H3 不保證可重現：同一組 prompt 與 seed 仍會得到不同影片。"
+                       "此欄位的實際用途是當成 ComfyUI 的快取鍵，改值才會重跑節點",
         }),
         "model": ([MINIMAX_MODEL], {"default": MINIMAX_MODEL}),
         "api_key": ("STRING", {"default": "", "multiline": False}),
-        "prompt_optimizer": ("BOOLEAN", {"default": True}),
+        "prompt_optimizer": ("BOOLEAN", {
+            "default": True,
+            "tooltip": "開啟時上游會先改寫、擴寫 prompt 再生成（短 prompt 效果較好）；"
+                       "關閉則嚴格照原文，適合已寫細的長 prompt 或要求結果可重現",
+        }),
     })
     required.update(DMXAPIVideoNodeBase.common_inputs(download_default=True))
     return required

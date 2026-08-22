@@ -7,7 +7,7 @@
 ## ✨ 功能亮點
 
 - 支援 GPT Image 2 與 Agnes Image 2.1 Flash 文生圖、圖生圖。
-- MiniMax 僅支援 `MiniMax-H3`，透過單一整合節點完成文生影片、首幀及首尾幀生成。
+- MiniMax 僅支援 `MiniMax-H3`，透過單一整合節點完成文生影片、首幀、尾幀及首尾幀生成。
 - 支援 Seedance 2.0 的文生影片、圖生影片、參考、延長及編輯流程。
 - 影片節點統一輸出 `VIDEO`、影格、末幀、檔案路徑、影片 URL 與任務 ID。
 - 內建非同步任務輪詢、下載、ComfyUI 影片預覽、重試與 API key 認證形式探測。
@@ -128,13 +128,20 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 
 | 輸入 | 說明 |
 | --- | --- |
-| `width` / `height` | 用來換算上游的比例與解析度檔位，不代表一定輸出這個像素尺寸。 |
+| `resolution` / `ratio`（MiniMax H3） | 直接對應上游的列舉欄位，**不是像素尺寸換算**。`resolution` 為 `768P` / `2K`，`ratio` 為 `16:9` / `9:16` / `1:1` / `4:3` / `3:4` / `21:9`。 |
+| `width` / `height`（Seedance 2.0） | 只用來換算上游的比例與解析度檔位，不代表一定輸出這個像素尺寸。 |
 | `duration` | 影片秒數；送給上游前會四捨五入為整數。一般範圍為 4–15 秒，Seedance 影片延長至少 8 秒。 |
-| `download_video` | 預設開啟。開啟時下載本地檔案並建立 `VIDEO`；關閉時只取得 URL 與任務 ID。此設定本身不會要求解碼影格。 |
-| `max_frames` | `-1` 解碼全部影格；`0` 不解碼影格；大於 0 時最多解碼指定幀數。 |
-| `save_dir` | 影片保存目錄；留空時使用 ComfyUI `output` 目錄。 |
-| `poll_interval` | 輪詢間隔，預設 8 秒。 |
-| `max_wait` | 最長等待時間，預設 900 秒。 |
+| `download_video` | 決定拿到影片網址後**要不要把檔案下載回本機**，不影響上游是否生成或計費。預設開啟：下載檔案、建立 `VIDEO` 輸出與節點上的內嵌播放器。關閉時 `VIDEO` 為 `None`、`VIDEO_PATH` 為空字串，只保留 `VIDEO_URL` 與 `TASK_ID`。 |
+| `max_frames` | 決定**要不要把影片解碼成 `IMAGE_FRAMES` 影格序列**，純粹是本機記憶體開關，與畫質無關。`-1` 解碼全部；`0`（預設）完全不解碼；大於 0 時最多解碼指定幀數。 |
+| `save_dir` | 影片保存目錄；留空時使用 ComfyUI `output` 目錄。想要節點上的內嵌播放器就留空。 |
+| `poll_interval` | 每隔幾秒向上游查詢一次任務狀態，預設 8 秒（可設 3–30）。輪詢查詢不計費，調小只是更早發現影片完成，一般不需要更動。 |
+| `max_wait` | 輪詢的**總等待上限**，預設 900 秒（15 分鐘），超過會拋 `[DMXAPI Timeout]`。 |
+
+`max_wait` 值得特別留意：**超時只代表節點放棄等待，上游任務仍在執行、而且已經計費。** 生成 2K 或較長的影片時 15 分鐘不一定足夠，建議調高到 1800–3600 秒。MiniMax H3 沒有事後取件節點，超時就無法再取回該次結果。
+
+輪詢途中的短暫網路問題不會讓整個任務前功盡棄：單次查詢失敗只會記錄警告，**連續失敗 20 次**才中止（以預設 8 秒間隔計算約可容忍 2.5 分鐘）。401 與 429 例外，會立即中止。
+
+關閉 `download_video` 適合只想取得 URL 交給其他流程的情境，但取件能力並不對稱：Seedance 可用 `DMXAPI Seedance2 下載影片` 節點事後補抓，MiniMax H3 則只能自行用 `VIDEO_URL` 下載，且必須趕在上游網址失效前。因此 H3 建議維持 `download_video=True`。
 
 所有影片節點的輸出固定為：
 
@@ -147,7 +154,11 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 | `VIDEO_URL` | DMXAPI 回傳的影片 URL。 |
 | `TASK_ID` | 非同步任務識別碼；Seedance 任務可交給其下載節點事後取件。 |
 
-高解析度影片請優先保持 `max_frames=0`。此時即使 `download_video=True`、影片已保存到本地，也不會解碼 `IMAGE_FRAMES` 或從影片抽取 `LAST_FRAME`；除非上游另有提供 `last_frame_url`，否則兩者使用空白影格。ComfyUI 的 `IMAGE` 是 `float32` tensor，4K 單張影格約 100 MB，整段影片全部解碼可能消耗數十 GB 記憶體。
+高解析度影片請優先保持 `max_frames=0`。此時即使 `download_video=True`、影片已保存到本地，也不會解碼 `IMAGE_FRAMES` 或從影片抽取 `LAST_FRAME`；除非上游另有提供 `last_frame_url`，否則兩者使用空白影格。ComfyUI 的 `IMAGE` 是 `float32` tensor，4K 單張影格約 100 MB，15 秒 24fps 全部解碼會超過 30 GB 記憶體。
+
+多數情況並不需要影格：`VIDEO` 輸出可直接接 `SaveVideo` / `PreviewVideo`，節點本身也有內嵌播放器，檔案路徑則在 `VIDEO_PATH`。只有要**對影格本身做後製**（upscale、逐幀 ControlNet、抽圖存檔、餵給其他模型）時才需要調高；只要幾張參考圖就設 `8`、`16`，真的要逐幀處理再設 `-1`。
+
+若想用 `LAST_FRAME` 串接下一段影片，請注意 MiniMax H3 不會提供 `last_frame_url`，必須把 `max_frames` 設為 `-1`（或夠大的值）實際解碼到最後一幀才拿得到。
 
 ### 可用節點
 
@@ -162,9 +173,27 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 
 | 顯示名稱 | 用途 |
 | --- | --- |
-| `DMXAPI MiniMax 影片生成` | 唯一公開 MiniMax 節點，模型固定為 `MiniMax-H3`。不接影格時為文生影片；可接首幀，或同時接首幀與尾幀。只接 `last_frame` 會在送出請求前報錯。 |
+| `DMXAPI MiniMax 影片生成` | 唯一公開 MiniMax 節點，模型固定為 `MiniMax-H3`。支援四種影格組合：不接影格（文生影片）、只接 `first_frame`（首幀）、只接 `last_frame`（尾幀）、兩者都接（首尾幀）。 |
 
 MiniMax H3 目前沒有公開的事後取件節點。生成節點仍會回傳 `TASK_ID`，但無法在另一個 MiniMax ComfyUI 節點中用該 ID 事後取回影片；如需本地影片，請在生成時保持 `download_video=True`。
+
+##### MiniMax H3 的尺寸與參數
+
+**H3 不接受任意像素尺寸。** 上游只收 `resolution` 與 `ratio` 兩個列舉欄位，因此節點提供的是兩個下拉選單，**不提供 `width` / `height`**：
+
+| 欄位 | 可用值 | 說明 |
+| --- | --- | --- |
+| `resolution` | `768P` / `2K` | 必填。`2K` 較慢也較貴。 |
+| `ratio` | `16:9` / `9:16` / `1:1` / `4:3` / `3:4` / `21:9` | **只在文生影片時送出。** 一旦接了 `first_frame` 或 `last_frame`，畫面比例固定跟隨輸入圖片（上游恆為 `adaptive`），此時節點會直接省略這個欄位。 |
+
+早期版本曾提供 `width` / `height` 再自動換算，但 `1280x720`、`1920x1080`、`1344x768` 全都會換算成同一組 `16:9` + `768P`（`2K` 需要短邊約 1105 以上），造成「改了寬高卻永遠得到 1344x768」的困惑，因此改為直接選列舉。
+
+另外兩個 DMXAPI 文件未列、但經實測確認行為的欄位：
+
+| 欄位 | 實測結果 |
+| --- | --- |
+| `prompt_optimizer`（預設開啟） | **有效。** 開啟時上游會先改寫、擴寫 prompt 再生成，短 prompt 的效果通常較好；關閉則嚴格照原文，適合已寫得很細的長 prompt。 |
+| `noise_seed` | **不保證可重現。** 固定同一組 prompt 與 seed 連續生成兩次，得到的是兩支不同的影片。此欄位的實際用途是作為 ComfyUI 的快取鍵——改動它才會讓節點重新執行，而不是直接回傳上一次的結果。 |
 
 #### Seedance 2.0
 
@@ -217,6 +246,8 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 - [DMXAPI Agnes Image 2.1 Flash 圖生圖](https://doc.dmxapi.cn/agnes-image-21-flash-i2i.html)
 - [DMXAPI GPT Image 2 文生圖](https://doc.dmxapi.cn/gpt-image-2-text-to-image.html)
 - [DMXAPI GPT Image 2 圖片編輯](https://doc.dmxapi.cn/gpt-image-2-image-edit.html)
+- [DMXAPI MiniMax-H3 文生視頻](https://doc.dmxapi.cn/MiniMax-H3-text-to-video.html)
+- [DMXAPI MiniMax-H3 圖生視頻](https://doc.dmxapi.cn/MiniMax-H3-image-to-video.html)
 
 ## 🧱 專案結構
 
@@ -260,6 +291,24 @@ PYTHONDONTWRITEBYTECODE=1 /path/to/ComfyUI/.venv/bin/python -c "import importlib
 ### 影片沒有內嵌播放器
 
 將 `download_video` 保持開啟，並讓 `save_dir` 留空，使影片存到 ComfyUI 的 `output` 目錄。前端只能直接服務 `output`、`input` 或 `temp` 底下的檔案；存到其他路徑時仍會回傳 `VIDEO_PATH`，但只顯示路徑文字。
+
+### 更新後舊 workflow 的 MiniMax 節點欄位跑掉了
+
+MiniMax 節點的 `width` / `height` 已改成 `resolution` / `ratio` 兩個下拉。ComfyUI 的 `widgets_values` 是依欄位順序保存的，因此舊 workflow 載入後這兩格會落回預設值（`768P` / `16:9`），其後的 `duration`、`noise_seed` 也可能一併偏移。請重新確認這幾個欄位，或直接刪掉節點重新加入。
+
+### MiniMax 影片為什麼不論怎麼設定都是 1344x768？
+
+這是舊版節點的行為：當時介面收 `width` / `height` 再換算成上游的比例與解析度檔位，而常見的 `1280x720`、`1920x1080`、`1344x768` 全都會換算成 `16:9` + `768P`，也就是 1344x768。現行版本已改成直接提供 `resolution` 與 `ratio` 兩個下拉；想要更大的畫面請把 `resolution` 選為 `2K`，想改變形狀請調整 `ratio`。
+
+注意接了 `first_frame` 或 `last_frame` 時 `ratio` 不會生效，畫面比例一律跟隨輸入圖片。
+
+### 固定了 seed，為什麼每次生成的影片都不一樣？
+
+MiniMax H3 不保證可重現。實測在關閉 `prompt_optimizer`、固定相同 prompt 與 `noise_seed` 的情況下連續生成兩次，得到的仍是兩支不同的影片。`noise_seed` 在本套件中的實際價值是作為 ComfyUI 的快取鍵：所有輸入都相同時 ComfyUI 不會重新執行節點，改動 `noise_seed` 才會真正再生成一次。
+
+### 影片輪詢逾時（`[DMXAPI Timeout]`）
+
+代表等待時間超過 `max_wait`（預設 900 秒）。請調高 `max_wait` 至 1800–3600 秒，特別是生成 `2K` 或較長的影片時。請注意逾時只是節點停止等待，上游任務仍在執行且已經計費；MiniMax H3 沒有事後取件節點，因此逾時無法再取回該次結果。
 
 ### 影片影格造成記憶體不足
 

@@ -141,6 +141,15 @@ print('OK')"
 
 公開 MiniMax 介面只有 `DMXAPI_MiniMax_Video`，其 `model` widget 只提供 `MiniMax-H3`。影格輸入有四種合法組合，與上游一致：不接影格為文生影片、只接 `first_frame`（首幀）、**只接 `last_frame`（尾幀）**、或兩者都接（首尾幀）。只接 `last_frame` 曾被節點擋下，但上游本來就支援，已解除限制——不要再加回這個檢查。兩個影格都沒接（純文生）時才強制 `prompt` 非空。H3 payload 的 `model` 固定為 `MiniMax-H3`，圖片 role 沿用 `first_frame` / `last_frame`，不要讓舊 workflow 傳入的 model 值改變實際 payload。
 
+`prompt_optimizer`（bool，預設 `True`）**不在 DMXAPI 的 H3 文件欄位清單裡，但實測確認上游確實吃**——
+同一組 prompt 開關兩次的結果有明顯差異。它是 Hailuo-02 / T2V-01 那代 `video_generation`
+端點的參數，H3 顯然仍相容。`True` 時上游會先改寫、擴寫 prompt 再生成（短 prompt 效果較好），
+`False` 則嚴格照原文，適合已寫細的長 prompt 或要求可重現的情況。**不要因為文件沒列就把它拿掉。**
+同樣未記載的還有 `seed`（`noise_seed > 0` 時才送），但**實測結果相反：關掉 `prompt_optimizer`、
+固定同一組 prompt 與 `noise_seed` 跑兩次，拿到的是兩支不同的影片**——H3 不保證可重現，
+`seed` 形同被忽略。欄位仍保留（送出無害，且它是 ComfyUI 的快取鍵之一：改動 `noise_seed`
+才能讓同參數的節點重新執行而不是直接回傳上次結果），但**不要在 UI 或文件上宣稱它能重現結果**。
+
 ### 尺寸：H3 直接收列舉，Seedance 收 width/height 再換算
 
 **MiniMax H3 不做像素換算。** 上游只收兩個列舉欄位（[文生視頻](https://doc.dmxapi.cn/MiniMax-H3-text-to-video.html)、[圖生視頻](https://doc.dmxapi.cn/MiniMax-H3-image-to-video.html)）：

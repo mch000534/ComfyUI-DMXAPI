@@ -113,6 +113,11 @@ RESPONSES_URL = BASE_HOST + "/v1/responses"
 MINIMAX_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
 H3_RESOLUTIONS = ["768P", "2K"]
 
+# 多模態參考生視頻是唯一能明確指定 "adaptive" 的 H3 情境：上游文件標明 ratio
+# 選填、預設 adaptive（由輸入自適應）。文生影片不可用 adaptive，首尾幀則恆為
+# adaptive 且不接受其他值，兩者都不該用這份清單。
+H3_REFERENCE_RATIOS = ["adaptive"] + MINIMAX_RATIOS
+
 # 解析度檔位：{上游名稱: 對應的短邊像素}。Seedance 節點層收的是 width / height，
 # 由 resolution_from_size() 以短邊挑最接近的檔位換算成這裡的名稱。
 SEEDANCE_RESOLUTION_TIERS = {"480p": 480, "720p": 720, "1080p": 1080, "4k": 2160}

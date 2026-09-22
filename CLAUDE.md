@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 專案性質
 
-ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI 相容的第三方模型聚合閘道）的圖像／影片生成服務，共 10 個節點：2 個圖像節點與 8 個影片節點。
+ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI 相容的第三方模型聚合閘道）的圖像／影片生成服務，共 11 個節點：2 個圖像節點與 9 個影片節點。
 
 這是**純 API 客戶端**，不做任何本地推論。`torch` / `numpy` / `Pillow` 只用於 ComfyUI tensor 與 base64 之間的轉換，`opencv-python` / `imageio` 只用於影片抽幀。修改時不要引入本地模型載入邏輯。
 
@@ -69,7 +69,7 @@ print('OK')"
 | [dmxapi_common.py](dmxapi_common.py) | **所有共用邏輯**：端點常數、Key 解析、HTTP 重試、輪詢迴圈、tensor 編解碼、影片下載與抽幀、影片節點基底類別 |
 | [dmxapi_gpt_image2_node.py](dmxapi_gpt_image2_node.py) | GPT Image 2 圖像生成（1 個節點） |
 | [dmxapi_agnes_image.py](dmxapi_agnes_image.py) | Agnes Image 2.1 Flash 圖像生成（1 個節點） |
-| [dmxapi_minimax_h3_nodes.py](dmxapi_minimax_h3_nodes.py) | MiniMax H3 影片（1 個已註冊節點）；`DMXAPI_MiniMax_Reference2V` 類別刻意不註冊，等待後續重構 |
+| [dmxapi_minimax_h3_nodes.py](dmxapi_minimax_h3_nodes.py) | MiniMax H3 影片（2 個節點：首尾幀生成與多模態參考生影片） |
 | [dmxapi_seedance2.py](dmxapi_seedance2.py) | 豆包 Seedance 2.0 影片（7 個節點） |
 
 **節點模組不應自行組 headers、自行寫重試迴圈、自行做 base64 編碼或自行輪詢**——這些一律走 `dmxapi_common`。新增節點時先看共用模組有沒有現成的東西。
@@ -137,9 +137,9 @@ print('OK')"
 
 整合的 `DMXAPI_MiniMax_Video` 直接對齊 ComfyUI 官方 H3 範本命名，可替換範本裡的本地推論子圖：`first_frame` / `last_frame` / `prompt` / `duration` / `noise_seed`。尺寸欄位是例外——H3 只收列舉，因此改成 `resolution` / `ratio` 兩個下拉（見下節），不再提供 `width` / `height`。範本的 `unet_name`、`clip_name`、`vae_name`、`audio_vae` 是本地模型載入用的，API 版換成 `model` 與 `api_key`。
 
-七個影片生成節點在適用時共用 `prompt` / `duration` / `noise_seed` 命名（Seedance 仍收 `width` / `height`，H3 收 `resolution` / `ratio`）；以影格控制生成的節點使用 `first_frame` / `last_frame`。Seedance 的多模態參考、影片延長與影片編輯另有各自的圖片及影片 URL 欄位，不能視為與 H3 完全相同的介面。`DMXAPI_Seedance2_DownloadVideo` 是第八個影片節點，使用獨立的下載介面，不接收生成節點的 prompt、尺寸、時長或 seed 欄位。**新增生成節點時應沿用適用的共通命名，但專用輸入仍須清楚區分。**
+八個影片生成節點在適用時共用 `prompt` / `duration` / `noise_seed` 命名（Seedance 仍收 `width` / `height`，H3 收 `resolution` / `ratio`）；以影格控制生成的節點使用 `first_frame` / `last_frame`。Seedance 的多模態參考、影片延長與影片編輯另有各自的圖片及影片 URL 欄位，不能視為與 H3 完全相同的介面。`DMXAPI_Seedance2_DownloadVideo` 是第九個影片節點，使用獨立的下載介面，不接收生成節點的 prompt、尺寸、時長或 seed 欄位。**新增生成節點時應沿用適用的共通命名，但專用輸入仍須清楚區分。**
 
-公開 MiniMax 介面只有 `DMXAPI_MiniMax_Video`，其 `model` widget 只提供 `MiniMax-H3`。影格輸入有四種合法組合，與上游一致：不接影格為文生影片、只接 `first_frame`（首幀）、**只接 `last_frame`（尾幀）**、或兩者都接（首尾幀）。只接 `last_frame` 曾被節點擋下，但上游本來就支援，已解除限制——不要再加回這個檢查。兩個影格都沒接（純文生）時才強制 `prompt` 非空。H3 payload 的 `model` 固定為 `MiniMax-H3`，圖片 role 沿用 `first_frame` / `last_frame`，不要讓舊 workflow 傳入的 model 值改變實際 payload。
+MiniMax 有兩個節點：`DMXAPI_MiniMax_Video`（首尾幀）與 `DMXAPI_MiniMax_Reference2V`（多模態參考，見下節），兩者的 `model` widget 都只提供 `MiniMax-H3`。影格輸入有四種合法組合，與上游一致：不接影格為文生影片、只接 `first_frame`（首幀）、**只接 `last_frame`（尾幀）**、或兩者都接（首尾幀）。只接 `last_frame` 曾被節點擋下，但上游本來就支援，已解除限制——不要再加回這個檢查。兩個影格都沒接（純文生）時才強制 `prompt` 非空。H3 payload 的 `model` 固定為 `MiniMax-H3`，圖片 role 沿用 `first_frame` / `last_frame`，不要讓舊 workflow 傳入的 model 值改變實際 payload。
 
 `prompt_optimizer`（bool，預設 `True`）**不在 DMXAPI 的 H3 文件欄位清單裡，但實測確認上游確實吃**——
 同一組 prompt 開關兩次的結果有明顯差異。它是 Hailuo-02 / T2V-01 那代 `video_generation`
@@ -149,6 +149,41 @@ print('OK')"
 固定同一組 prompt 與 `noise_seed` 跑兩次，拿到的是兩支不同的影片**——H3 不保證可重現，
 `seed` 形同被忽略。欄位仍保留（送出無害，且它是 ComfyUI 的快取鍵之一：改動 `noise_seed`
 才能讓同參數的節點重新執行而不是直接回傳上次結果），但**不要在 UI 或文件上宣稱它能重現結果**。
+
+### MiniMax H3 多模態參考生影片（`DMXAPI_MiniMax_Reference2V`）
+
+文件：[多模態參考生視頻](https://doc.dmxapi.cn/MiniMax-H3-multimodal-reference-to-video.html)。
+與首尾幀走**同一個 model、同一個端點**，差別全在 `input` 陣列的內容。
+
+- **與圖生視頻互斥（官方明文）**：`input` 裡只要出現任一 `reference_image` /
+  `reference_video` / `reference_audio`，就**不能**再出現 `first_frame` / `last_frame`。
+  節點因此刻意不提供影格輸入，也不要為了「方便」把兩者合成一個節點——那會做出一個
+  必然被上游拒絕的組合。
+- **role 名稱是 `reference_image` / `reference_video` / `reference_audio`**，型別欄位分別是
+  `image_url` / `video_url` / `audio_url`，URL 包在同名的子物件裡（`{"url": ...}`）。
+  舊版那個未註冊的類別用的是自創的 `character` / `style` role 與頂層 `audio_url` 欄位，
+  **是錯的**，已整個重寫。
+- **`ratio` 在這裡是選填、預設 `adaptive`，而且 `adaptive` 是合法值**——這是 H3 三種情境裡
+  唯一能明確指定 `adaptive` 的一個（文生影片不可用、首尾幀恆為 `adaptive` 但送了會被忽略）。
+  因此節點的 ratio 下拉用 `H3_REFERENCE_RATIOS`（= `adaptive` + `MINIMAX_RATIOS`），
+  且 payload **一定要送**，否則使用者選的比例會無聲失效。
+  `build_h3_payload()` 的 `send_ratio` 就是為此而存在的三態旗標：`None` = 首尾幀那套
+  「只有純文字才送」的規則，`True` = 一律送。**不要把它改回用 `len(items)` 推斷。**
+- 硬性限制全部抄在模組常數裡（照文件，不要憑印象調）：圖片 ≤ 9 張、影片 ≤ 3 段、
+  音訊 ≤ 3 段（影音各自單段 2~15 秒、總長 ≤ 15 秒）、prompt ≤ 7000 字且**必須非空**、
+  請求體總大小 ≤ 64 MB、參考圖寬高 [256, 5760] 且比例 [0.4, 2.5]。
+  數量超限一律截斷並示警（同 Agnes 的做法），不直接報錯。
+- 參考圖可以來自 ComfyUI 的 `IMAGE`（節點逐張編成 data URI，JPEG q95、長邊縮到
+  `REFERENCE_MAX_SIDE` = 2048）或公網 URL，兩者合計計入 9 張的額度，**內嵌的排在 URL 前面**。
+  縮圖不只是省流量：base64 是算進那 64 MB 請求體的。影片與音訊上游只收 URL，
+  無法從畫布傳入，所以節點只開多行字串欄位（一行一個 URL）。
+- **中轉的計費規則：至少要有一段 `reference_video`**（`REQUIRE_REFERENCE_VIDEO`）。官方文件把
+  三種素材都寫成選填，但只給參考圖時 DMXAPI 會回
+  `400 {"code": "dmxapi_billing_error", "message": "billing requires at least one reference video"}`
+  ——實測確認。節點在送出前就擋下並指路（要純圖片就用首幀），避免白等一輪 400。
+  這是中轉而非 MiniMax 本身的限制，日後放寬只要改掉那個旗標。
+- 沒有任何參考素材時直接報錯並指回 `DMXAPI_MiniMax_Video`——不帶素材時它就只是文生影片，
+  而且 `ratio=adaptive` 在那個情境是非法值。
 
 ### 尺寸：H3 直接收列舉，Seedance 收 width/height 再換算
 
@@ -180,7 +215,7 @@ print('OK')"
 
 ### 影片節點的統一契約
 
-所有 8 個影片節點都繼承 `common.DMXAPIVideoNodeBase`，並共享相同的輸出簽章，因此下游輸出接線可以互換：
+所有 9 個影片節點都繼承 `common.DMXAPIVideoNodeBase`，並共享相同的輸出簽章，因此下游輸出接線可以互換：
 
 ```python
 RETURN_NAMES = ("VIDEO", "IMAGE_FRAMES", "LAST_FRAME", "VIDEO_PATH", "VIDEO_URL", "TASK_ID")
@@ -188,7 +223,7 @@ RETURN_NAMES = ("VIDEO", "IMAGE_FRAMES", "LAST_FRAME", "VIDEO_PATH", "VIDEO_URL"
 
 第一槽的 `VIDEO` 與官方範本一致，可直接接內建 `SaveVideo` / `PreviewVideo`。它由 `common.to_video_output(path)` 以 `comfy_api` 的 `VideoFromFile` 包本地檔案產生；`comfy_api` 只有在 ComfyUI 進程內才 import 得到（冒煙測試是裸 Python 載入本套件），所以那裡是**延遲 import 且失敗回傳 None**，不要改成模組層級 import。
 
-七個生成節點的共用輸入由 `common_inputs()` 產生：`download_video` / `max_frames` / `save_dir` / `poll_interval` / `max_wait`；長度由 `duration_input()` 產生，尺寸則分兩路：Seedance 走 `size_inputs()`（width / height），H3 自行宣告 `resolution` / `ratio` 下拉。生成節點收尾呼叫 `self.finish(...)`，由它決定是否落地成檔案。Seedance 下載節點自行宣告獨立輸入，但維持相同輸出簽章。
+八個生成節點的共用輸入由 `common_inputs()` 產生：`download_video` / `max_frames` / `save_dir` / `poll_interval` / `max_wait`；長度由 `duration_input()` 產生，尺寸則分兩路：Seedance 走 `size_inputs()`（width / height），H3 自行宣告 `resolution` / `ratio` 下拉。生成節點收尾呼叫 `self.finish(...)`，由它決定是否落地成檔案。Seedance 下載節點自行宣告獨立輸入，但維持相同輸出簽章。
 
 - `download_video=False` → 不下載影片，只回 URL 與 task_id；`VIDEO` 是 `None`，`IMAGE_FRAMES` 使用空白影格。若上游有 `last_frame_url`，`LAST_FRAME` 仍可使用該圖片，否則也為空白影格。
 - `download_video=True` → 下載影片並建立 `VIDEO` 與預覽；只有 `max_frames != 0` 才會解碼 `IMAGE_FRAMES`。

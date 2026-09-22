@@ -28,11 +28,11 @@ MINIMAX = sys.modules[PACKAGE_NAME + ".dmxapi_minimax_h3_nodes"]
 
 
 class MiniMaxSimplificationTests(unittest.TestCase):
-    def test_total_registered_node_count_is_ten(self):
-        self.assertEqual(len(PACKAGE.NODE_CLASS_MAPPINGS), 10)
+    def test_total_registered_node_count_is_eleven(self):
+        self.assertEqual(len(PACKAGE.NODE_CLASS_MAPPINGS), 11)
 
-    def test_only_integrated_minimax_node_is_registered(self):
-        expected = ["DMXAPI_MiniMax_Video"]
+    def test_registered_minimax_nodes(self):
+        expected = ["DMXAPI_MiniMax_Video", "DMXAPI_MiniMax_Reference2V"]
         minimax_class_ids = [
             name
             for name in PACKAGE.NODE_CLASS_MAPPINGS
@@ -49,22 +49,39 @@ class MiniMaxSimplificationTests(unittest.TestCase):
             PACKAGE.NODE_DISPLAY_NAME_MAPPINGS["DMXAPI_MiniMax_Video"],
             "DMXAPI MiniMax 影片生成",
         )
+        self.assertEqual(
+            PACKAGE.NODE_DISPLAY_NAME_MAPPINGS["DMXAPI_MiniMax_Reference2V"],
+            "DMXAPI MiniMax 多模態參考生影片",
+        )
 
     def test_integrated_model_widget_only_offers_and_defaults_to_h3(self):
         model_spec = MINIMAX.DMXAPI_MiniMax_Video.INPUT_TYPES()["required"]["model"]
         self.assertEqual(model_spec[0], ["MiniMax-H3"])
         self.assertEqual(model_spec[1]["default"], "MiniMax-H3")
 
-    def test_reference_node_is_unregistered_and_h3_only(self):
-        self.assertNotIn("DMXAPI_MiniMax_Reference2V", PACKAGE.NODE_CLASS_MAPPINGS)
-        self.assertNotIn(
-            "DMXAPI_MiniMax_Reference2V", PACKAGE.NODE_DISPLAY_NAME_MAPPINGS
-        )
+    def test_reference_node_is_h3_only(self):
         model_spec = MINIMAX.DMXAPI_MiniMax_Reference2V.INPUT_TYPES()["required"][
             "model"
         ]
         self.assertEqual(model_spec[0], ["MiniMax-H3"])
         self.assertEqual(model_spec[1]["default"], "MiniMax-H3")
+
+    def test_reference_node_offers_adaptive_ratio_by_default(self):
+        """多模態參考是唯一能指定 adaptive 的情境，且上游預設就是它。"""
+        ratio_spec = MINIMAX.DMXAPI_MiniMax_Reference2V.INPUT_TYPES()["required"]["ratio"]
+        self.assertIn("adaptive", ratio_spec[0])
+        self.assertEqual(ratio_spec[1]["default"], "adaptive")
+
+    def test_frame_node_ratio_has_no_adaptive(self):
+        """文生影片不接受 adaptive，首尾幀則不送 ratio，兩者都不該出現這個選項。"""
+        ratio_spec = MINIMAX.DMXAPI_MiniMax_Video.INPUT_TYPES()["required"]["ratio"]
+        self.assertNotIn("adaptive", ratio_spec[0])
+
+    def test_reference_node_has_no_frame_inputs(self):
+        """官方明文：出現 reference_* role 就不能再出現 first_frame / last_frame。"""
+        optional = MINIMAX.DMXAPI_MiniMax_Reference2V.INPUT_TYPES()["optional"]
+        self.assertNotIn("first_frame", optional)
+        self.assertNotIn("last_frame", optional)
 
     def test_removed_node_classes_are_absent(self):
         for name in (
@@ -146,7 +163,6 @@ class MiniMaxSimplificationTests(unittest.TestCase):
             )
         node.resolve_key.assert_not_called()
         node.run_task.assert_not_called()
-
     def test_removed_model_value_fails_before_submit(self):
         node = MINIMAX.DMXAPI_MiniMax_Video()
         node.run_task = Mock(side_effect=AssertionError("API submission reached"))
@@ -154,46 +170,14 @@ class MiniMaxSimplificationTests(unittest.TestCase):
             self._generate_without_frames(node, model="MiniMax-Hailuo-02")
         node.run_task.assert_not_called()
 
-    def test_reference_removed_model_fails_before_api_work(self):
-        node = MINIMAX.DMXAPI_MiniMax_Reference2V()
-        node.resolve_key = Mock(side_effect=AssertionError("API key resolution reached"))
-        node.run_task = Mock(side_effect=AssertionError("API submission reached"))
-
-        with self.assertRaisesRegex(ValueError, "MiniMax-H3"):
-            node.generate(
-                prompt="test",
-                resolution="768P",
-                ratio="16:9",
-                duration=5.0,
-                noise_seed=0,
-                model="MiniMax-Hailuo-02",
-                api_key="unused",
-                prompt_optimizer=True,
-                download_video=False,
-                max_frames=0,
-                save_dir="",
-                poll_interval=8,
-                max_wait=60,
-            )
-
-        node.resolve_key.assert_not_called()
-        node.run_task.assert_not_called()
-
-    def test_unregistered_reference_path_uses_h3_signatures_offline(self):
-        node = MINIMAX.DMXAPI_MiniMax_Reference2V()
-        node.resolve_key = Mock(return_value="token")
-        node.run_task = Mock(
-            return_value=("https://example.invalid/video.mp4", "task")
-        )
-        node.finish = Mock(return_value="finished")
-
-        result = node.generate(
+    def _reference_generate(self, node, model="MiniMax-H3", **overrides):
+        kwargs = dict(
             prompt="test",
             resolution="768P",
-            ratio="16:9",
+            ratio="adaptive",
             duration=5.0,
             noise_seed=0,
-            model="MiniMax-H3",
+            model=model,
             api_key="unused",
             prompt_optimizer=True,
             download_video=False,
@@ -201,12 +185,96 @@ class MiniMaxSimplificationTests(unittest.TestCase):
             save_dir="",
             poll_interval=8,
             max_wait=60,
+            reference_image_urls="https://example.invalid/a.png",
+            reference_video_urls="https://example.invalid/v.mp4",
+        )
+        kwargs.update(overrides)
+        return node.generate(**kwargs)
+
+    def _mocked_reference_node(self):
+        node = MINIMAX.DMXAPI_MiniMax_Reference2V()
+        node.resolve_key = Mock(return_value="token")
+        node.run_task = Mock(
+            return_value=("https://example.invalid/video.mp4", "task")
+        )
+        node.finish = Mock(return_value="finished")
+        return node
+
+    def test_reference_payload_uses_documented_roles_and_sends_ratio(self):
+        node = self._mocked_reference_node()
+
+        result = self._reference_generate(
+            node,
+            reference_image_urls="https://example.invalid/a.png\nhttps://example.invalid/b.png",
+            reference_video_urls="https://example.invalid/v.mp4",
+            reference_audio_urls="https://example.invalid/a.mp3",
         )
 
         self.assertEqual(result, "finished")
         payload = node.run_task.call_args.args[0]
         self.assertEqual(payload["model"], "MiniMax-H3")
         node.run_task.assert_called_once_with(payload, "token", 8, 60)
+
+        items = payload["input"]
+        self.assertEqual(items[0], {"type": "text", "text": "test"})
+        self.assertEqual(
+            [item["role"] for item in items[1:]],
+            ["reference_image", "reference_image", "reference_video", "reference_audio"],
+        )
+        self.assertEqual(
+            [item["type"] for item in items[1:]],
+            ["image_url", "image_url", "video_url", "audio_url"],
+        )
+        self.assertEqual(items[3]["video_url"], {"url": "https://example.invalid/v.mp4"})
+        # 首尾幀情境會省略 ratio，多模態參考則必須照送（上游文件明文接受）
+        self.assertEqual(payload["ratio"], "adaptive")
+
+    def test_reference_requires_some_reference_material(self):
+        node = self._mocked_reference_node()
+        with self.assertRaisesRegex(ValueError, "參考素材"):
+            self._reference_generate(
+                node, reference_image_urls="", reference_video_urls="",
+            )
+        node.run_task.assert_not_called()
+
+    def test_reference_requires_at_least_one_video(self):
+        """DMXAPI 中轉的計費規則：只給參考圖會被上游 400 擋下，節點要先攔。"""
+        node = self._mocked_reference_node()
+        with self.assertRaisesRegex(ValueError, "參考影片"):
+            self._reference_generate(node, reference_video_urls="")
+        node.run_task.assert_not_called()
+
+    def test_reference_requires_prompt(self):
+        node = self._mocked_reference_node()
+        with self.assertRaisesRegex(ValueError, "Prompt"):
+            self._reference_generate(node, prompt="   ")
+        node.run_task.assert_not_called()
+
+    def test_reference_url_counts_are_capped_at_upstream_limits(self):
+        node = self._mocked_reference_node()
+
+        self._reference_generate(
+            node,
+            reference_image_urls="\n".join("https://example.invalid/%d.png" % i for i in range(12)),
+            reference_video_urls="\n".join("https://example.invalid/%d.mp4" % i for i in range(5)),
+            reference_audio_urls="\n".join("https://example.invalid/%d.mp3" % i for i in range(5)),
+        )
+
+        roles = [item.get("role") for item in node.run_task.call_args.args[0]["input"][1:]]
+        self.assertEqual(roles.count("reference_image"), MINIMAX.MAX_REFERENCE_IMAGES)
+        self.assertEqual(roles.count("reference_video"), MINIMAX.MAX_REFERENCE_VIDEOS)
+        self.assertEqual(roles.count("reference_audio"), MINIMAX.MAX_REFERENCE_AUDIOS)
+
+    def test_reference_removed_model_fails_before_api_work(self):
+        node = MINIMAX.DMXAPI_MiniMax_Reference2V()
+        node.resolve_key = Mock(side_effect=AssertionError("API key resolution reached"))
+        node.run_task = Mock(side_effect=AssertionError("API submission reached"))
+
+        with self.assertRaisesRegex(ValueError, "MiniMax-H3"):
+            self._reference_generate(node, model="MiniMax-Hailuo-02")
+
+        node.resolve_key.assert_not_called()
+        node.run_task.assert_not_called()
 
 
 if __name__ == "__main__":

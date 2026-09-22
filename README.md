@@ -2,12 +2,12 @@
 
 > 將 DMXAPI 的圖像與影片生成服務封裝成 ComfyUI 自訂節點。
 
-這是一個純 API 客戶端，不在本機載入或執行生成模型。目前共註冊 10 個節點：2 個圖像節點與 8 個影片節點。節點會把 ComfyUI 的文字、圖片與影片輸入轉成 DMXAPI 請求，再將結果轉回 ComfyUI 可用的 `IMAGE`、`VIDEO`、影片路徑與 URL。
+這是一個純 API 客戶端，不在本機載入或執行生成模型。目前共註冊 11 個節點：2 個圖像節點與 9 個影片節點。節點會把 ComfyUI 的文字、圖片與影片輸入轉成 DMXAPI 請求，再將結果轉回 ComfyUI 可用的 `IMAGE`、`VIDEO`、影片路徑與 URL。
 
 ## ✨ 功能亮點
 
 - 支援 GPT Image 2 與 Agnes Image 2.1 Flash 文生圖、圖生圖。
-- MiniMax 僅支援 `MiniMax-H3`，透過單一整合節點完成文生影片、首幀、尾幀及首尾幀生成。
+- MiniMax 僅支援 `MiniMax-H3`：整合節點完成文生影片、首幀、尾幀及首尾幀生成，另有多模態參考節點支援參考圖／影片／音訊。
 - 支援 Seedance 2.0 的文生影片、圖生影片、參考、延長及編輯流程。
 - 影片節點統一輸出 `VIDEO`、影格、末幀、檔案路徑、影片 URL 與任務 ID。
 - 內建非同步任務輪詢、下載、ComfyUI 影片預覽、重試與 API key 認證形式探測。
@@ -173,7 +173,8 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 
 | 顯示名稱 | 用途 |
 | --- | --- |
-| `DMXAPI MiniMax 影片生成` | 唯一公開 MiniMax 節點，模型固定為 `MiniMax-H3`。支援四種影格組合：不接影格（文生影片）、只接 `first_frame`（首幀）、只接 `last_frame`（尾幀）、兩者都接（首尾幀）。 |
+| `DMXAPI MiniMax 影片生成` | 模型固定為 `MiniMax-H3`。支援四種影格組合：不接影格（文生影片）、只接 `first_frame`（首幀）、只接 `last_frame`（尾幀）、兩者都接（首尾幀）。 |
+| `DMXAPI MiniMax 多模態參考生影片` | 模型同為 `MiniMax-H3`。以參考圖、參考影片與參考音訊指定主體、動作與音色，**不接首尾幀**（上游兩者互斥）。 |
 
 MiniMax H3 目前沒有公開的事後取件節點。生成節點仍會回傳 `TASK_ID`，但無法在另一個 MiniMax ComfyUI 節點中用該 ID 事後取回影片；如需本地影片，請在生成時保持 `download_video=True`。
 
@@ -194,6 +195,29 @@ MiniMax H3 目前沒有公開的事後取件節點。生成節點仍會回傳 `T
 | --- | --- |
 | `prompt_optimizer`（預設開啟） | **有效。** 開啟時上游會先改寫、擴寫 prompt 再生成，短 prompt 的效果通常較好；關閉則嚴格照原文，適合已寫得很細的長 prompt。 |
 | `noise_seed` | **不保證可重現。** 固定同一組 prompt 與 seed 連續生成兩次，得到的是兩支不同的影片。此欄位的實際用途是作為 ComfyUI 的快取鍵——改動它才會讓節點重新執行，而不是直接回傳上一次的結果。 |
+
+##### MiniMax H3 多模態參考生影片
+
+`DMXAPI MiniMax 多模態參考生影片` 對應上游的[多模態參考生視頻](https://doc.dmxapi.cn/MiniMax-H3-multimodal-reference-to-video.html)介面：在 prompt 之外再給幾份「參考素材」，讓模型照著它們的主體、動作或音色生成影片。prompt 裡可以直接指名素材，例如「音色參考音頻 1」。
+
+**與首尾幀互斥。** 上游明文規定：只要帶了任何一項參考素材，就不能再帶 `first_frame` / `last_frame`。因此這個節點完全沒有影格輸入；要做首尾幀請改用 `DMXAPI MiniMax 影片生成`。
+
+| 輸入 | 說明 |
+| --- | --- |
+| `reference_images` | ComfyUI 的 `IMAGE`，可接 batch。節點會逐張編碼後內嵌到請求裡（JPEG、長邊縮到 2048）。 |
+| `reference_image_urls` | 公網圖片 URL，一行一個。與 `reference_images` **合計最多 9 張**，內嵌的排在前面。 |
+| `reference_video_urls` | 公網影片 URL（MP4／MOV），一行一個，**最少 1 段、最多 3 段**（見下方計費規則），單段 2~15 秒、總長不超過 15 秒。 |
+| `reference_audio_urls` | 公網音訊 URL（WAV／MP3），一行一個，**最多 3 段**，單段 2~15 秒、總長不超過 15 秒、單檔 15 MB 以內。 |
+
+其餘欄位（`resolution`、`duration`、`noise_seed`、`prompt_optimizer` 與下載相關的共同輸入）與 `DMXAPI MiniMax 影片生成` 相同，只有 `ratio` 不同：**這裡多了 `adaptive` 並且是預設值**，代表由上游依參考素材自動挑選最合適的比例；也可以指定 `16:9` 等固定比例。
+
+其他限制與行為：
+
+- **必須至少有一段參考影片。** DMXAPI 對這個計費項目要求 `input` 內含 `reference_video`，只給參考圖會被上游以 `400 dmxapi_billing_error`（`billing requires at least one reference video`）拒絕。節點會在送出前擋下並提示。想只用圖片生成影片，請改用 `DMXAPI MiniMax 影片生成` 的 `first_frame`。
+- **prompt 必填**且不得超過 7000 字；沒有任何參考素材時節點會直接報錯，並提示改用 `DMXAPI MiniMax 影片生成`。
+- URL 數量超過上限時會截斷成前 N 筆並在主控台留下警告，不會中斷生成。
+- 參考圖寬高需落在 256~5760 px、寬高比 0.4~2.5，超出範圍時節點會警告（實際判定仍在上游）。
+- 影片與音訊**只能給 URL**，無法從畫布傳入；整個請求體上限 64 MB，內嵌太多張參考圖時請改用 URL。
 
 #### Seedance 2.0
 
@@ -248,6 +272,7 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 - [DMXAPI GPT Image 2 圖片編輯](https://doc.dmxapi.cn/gpt-image-2-image-edit.html)
 - [DMXAPI MiniMax-H3 文生視頻](https://doc.dmxapi.cn/MiniMax-H3-text-to-video.html)
 - [DMXAPI MiniMax-H3 圖生視頻](https://doc.dmxapi.cn/MiniMax-H3-image-to-video.html)
+- [DMXAPI MiniMax-H3 多模態參考生視頻](https://doc.dmxapi.cn/MiniMax-H3-multimodal-reference-to-video.html)
 
 ## 🧱 專案結構
 
@@ -257,7 +282,7 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 | `dmxapi_common.py` | API key、HTTP 請求與重試、輪詢、tensor 編解碼、影片下載與共用影片輸出。 |
 | `dmxapi_gpt_image2_node.py` | GPT Image 2 節點。 |
 | `dmxapi_agnes_image.py` | Agnes Image 2.1 Flash 節點。 |
-| `dmxapi_minimax_h3_nodes.py` | 一個已註冊的 MiniMax H3 整合節點，以及一個刻意不註冊、等待後續重構的參考圖實作。 |
+| `dmxapi_minimax_h3_nodes.py` | MiniMax H3 的兩個節點：首尾幀整合節點與多模態參考生影片節點。 |
 | `dmxapi_seedance2.py` | Seedance 2.0 與下載節點。 |
 | `requirements.txt` | Python 依賴清單。 |
 
@@ -274,7 +299,7 @@ cd /path/to/ComfyUI/custom_nodes/ComfyUI-DMXAPI
 PYTHONDONTWRITEBYTECODE=1 /path/to/ComfyUI/.venv/bin/python -c "import importlib.util,sys; p='.'; s=importlib.util.spec_from_file_location('ComfyUI_DMXAPI',p+'/__init__.py',submodule_search_locations=[p]); m=importlib.util.module_from_spec(s); sys.modules['ComfyUI_DMXAPI']=m; s.loader.exec_module(m); print(len(m.NODE_CLASS_MAPPINGS), sorted(m.NODE_CLASS_MAPPINGS))"
 ```
 
-預期會看到 10 個節點。
+預期會看到 11 個節點。
 
 ### 收到 401 或認證失敗
 
@@ -309,6 +334,10 @@ MiniMax H3 不保證可重現。實測在關閉 `prompt_optimizer`、固定相�
 ### 影片輪詢逾時（`[DMXAPI Timeout]`）
 
 代表等待時間超過 `max_wait`（預設 900 秒）。請調高 `max_wait` 至 1800–3600 秒，特別是生成 `2K` 或較長的影片時。請注意逾時只是節點停止等待，上游任務仍在執行且已經計費；MiniMax H3 沒有事後取件節點，因此逾時無法再取回該次結果。
+
+### 多模態參考回報 `billing requires at least one reference video`
+
+DMXAPI 對「多模態參考生視頻」這個計費項目要求請求中至少有一段參考影片，只帶參考圖不受理（官方欄位文件沒寫這條）。在 `reference_video_urls` 填入一段公網影片 URL 即可；若本來就只想用圖片生成，請改用 `DMXAPI MiniMax 影片生成` 並把圖片接到 `first_frame`。
 
 ### 影片影格造成記憶體不足
 

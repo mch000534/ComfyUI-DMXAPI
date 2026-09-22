@@ -15,6 +15,7 @@ import time
 import base64
 import logging
 import tempfile
+import wave
 from datetime import datetime
 
 import numpy as np
@@ -473,6 +474,39 @@ def tensor_to_data_url(tensor, fmt="PNG", quality=95):
     return "data:" + mime + ";base64," + base64.b64encode(raw).decode("utf-8")
 
 
+def audio_to_wav_data_url(audio):
+    """ComfyUI AUDIO → (WAV data URI, 秒數, 原始 bytes 數)。
+
+    AUDIO waveform 形狀為 ``[B, C, samples]``；API 一次只接受一段素材，因此取
+    batch 第一筆，並把多於兩個的聲道裁成雙聲道 PCM16 WAV。
+    """
+    if not isinstance(audio, dict) or "waveform" not in audio or "sample_rate" not in audio:
+        raise ValueError("[DMXAPI Error] AUDIO 資料格式無效。")
+
+    waveform = audio["waveform"]
+    sample_rate = int(audio["sample_rate"])
+    if not isinstance(waveform, torch.Tensor) or waveform.ndim != 3:
+        raise ValueError("[DMXAPI Error] AUDIO waveform 必須是 [B, C, samples] tensor。")
+    if waveform.shape[0] < 1 or waveform.shape[1] < 1 or waveform.shape[2] < 1:
+        raise ValueError("[DMXAPI Error] AUDIO waveform 不可為空。")
+    if sample_rate <= 0:
+        raise ValueError("[DMXAPI Error] AUDIO sample_rate 必須大於 0。")
+
+    pcm = waveform[0, :2].detach().cpu().float().clamp(-1, 1)
+    pcm = (pcm.transpose(0, 1).numpy() * 32767.0).round().astype(np.int16)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as output:
+        output.setnchannels(int(pcm.shape[1]))
+        output.setsampwidth(2)
+        output.setframerate(sample_rate)
+        output.writeframes(pcm.tobytes())
+
+    raw = buffer.getvalue()
+    duration = float(pcm.shape[0]) / sample_rate
+    data_url = "data:audio/wav;base64," + base64.b64encode(raw).decode("ascii")
+    return data_url, duration, len(raw)
+
+
 def bytes_to_tensor(image_bytes):
     """圖片 bytes → IMAGE tensor [1, H, W, C]。"""
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -528,6 +562,58 @@ def download_image_tensor(url):
 
 
 # ==================== 影片 ====================
+
+def video_to_data_url(video):
+    """ComfyUI VIDEO → (影片 data URI, 秒數, 原始 bytes 數)。
+
+    MP4/MOV 直接沿用來源 bytes；其他容器延遲載入 ComfyUI API，轉成上游接受的
+    MP4/H.264。延遲 import 讓套件仍可在沒有 ComfyUI runtime 的單元測試中載入。
+    """
+    try:
+        duration = float(video.get_duration())
+        formats = {
+            value.strip().lower()
+            for value in str(video.get_container_format()).split(",")
+            if value.strip()
+        }
+        get_trim_window = getattr(video, "get_active_trim_window", None)
+        trim_window = get_trim_window() if callable(get_trim_window) else (0.0, 0.0)
+        has_active_trim = any(float(value) != 0.0 for value in trim_window)
+        if formats.intersection({"mp4", "mov"}) and not has_active_trim:
+            source = video.get_stream_source()
+            if isinstance(source, (str, os.PathLike)):
+                source_path = os.fspath(source)
+                with open(source_path, "rb") as handle:
+                    raw = handle.read()
+                suffix = os.path.splitext(source_path)[1].lower()
+                mime = "video/mov" if suffix == ".mov" else "video/mp4"
+            else:
+                source.seek(0)
+                raw = source.read()
+                source.seek(0)
+                mime = "video/mp4"
+        else:
+            from comfy_api.latest import VideoCodec, VideoContainer
+
+            buffer = io.BytesIO()
+            video.save_to(
+                buffer,
+                format=VideoContainer.MP4,
+                codec=VideoCodec.H264,
+            )
+            raw = buffer.getvalue()
+            mime = "video/mp4"
+    except Exception as error:
+        raise ValueError("[DMXAPI Error] 無法讀取或轉碼 VIDEO：" + str(error)) from error
+
+    if duration <= 0:
+        raise ValueError("[DMXAPI Error] VIDEO 時長必須大於 0 秒。")
+    if not raw:
+        raise ValueError("[DMXAPI Error] VIDEO 內容為空。")
+
+    data_url = "data:" + mime + ";base64," + base64.b64encode(raw).decode("ascii")
+    return data_url, duration, len(raw)
+
 
 def get_output_dir():
     """取得 ComfyUI 的 output 目錄。"""

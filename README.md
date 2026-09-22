@@ -206,18 +206,21 @@ MiniMax H3 目前沒有公開的事後取件節點。生成節點仍會回傳 `T
 | --- | --- |
 | `reference_images` | ComfyUI 的 `IMAGE`，可接 batch。節點會逐張編碼後內嵌到請求裡（JPEG、長邊縮到 2048）。 |
 | `reference_image_urls` | 公網圖片 URL，一行一個。與 `reference_images` **合計最多 9 張**，內嵌的排在前面。 |
-| `reference_video_urls` | 公網影片 URL（MP4／MOV），一行一個，**最少 1 段、最多 3 段**（見下方計費規則），單段 2~15 秒、總長不超過 15 秒。 |
-| `reference_audio_urls` | 公網音訊 URL（WAV／MP3），一行一個，**最多 3 段**，單段 2~15 秒、總長不超過 15 秒、單檔 15 MB 以內。 |
+| `reference_video_1`～`reference_video_3` | ComfyUI 的 `VIDEO`，可直接接內建 `Load Video`。MP4／MOV 保留原檔；其他容器轉成 MP4/H.264，來源影片內的音軌會一併保留。 |
+| `reference_audio_1`～`reference_audio_3` | ComfyUI 的 `AUDIO`，可直接接內建 `Load Audio`。取 batch 第一筆並轉成 PCM16 WAV。 |
+| `reference_video_urls` | 公網影片 URL（MP4／MOV），一行一個；與三個 `VIDEO` 插口**合計最多 3 段**。 |
+| `reference_audio_urls` | 公網音訊 URL（WAV／MP3），一行一個；與三個 `AUDIO` 插口**合計最多 3 段**。 |
 
 其餘欄位（`resolution`、`duration`、`noise_seed`、`prompt_optimizer` 與下載相關的共同輸入）與 `DMXAPI MiniMax 影片生成` 相同，只有 `ratio` 不同：**這裡多了 `adaptive` 並且是預設值**，代表由上游依參考素材自動挑選最合適的比例；也可以指定 `16:9` 等固定比例。
 
 其他限制與行為：
 
-- **必須至少有一段參考影片。** DMXAPI 對這個計費項目要求 `input` 內含 `reference_video`，只給參考圖會被上游以 `400 dmxapi_billing_error`（`billing requires at least one reference video`）拒絕。節點會在送出前擋下並提示。想只用圖片生成影片，請改用 `DMXAPI MiniMax 影片生成` 的 `first_frame`。
+- 參考圖片或參考影片可單獨使用，也可混合使用；**參考音訊不能單獨使用**，必須搭配至少一張參考圖片或一段參考影片。
 - **prompt 必填**且不得超過 7000 字；沒有任何參考素材時節點會直接報錯，並提示改用 `DMXAPI MiniMax 影片生成`。
-- URL 數量超過上限時會截斷成前 N 筆並在主控台留下警告，不會中斷生成。
+- 同類素材依「本機插口在前、URL 在後」合併；本機素材占滿額度後，多出的 URL 會截斷並在主控台留下警告。
 - 參考圖寬高需落在 256~5760 px、寬高比 0.4~2.5，超出範圍時節點會警告（實際判定仍在上游）。
-- 影片與音訊**只能給 URL**，無法從畫布傳入；整個請求體上限 64 MB，內嵌太多張參考圖時請改用 URL。
+- 本機影片與音訊皆須單段 2～15 秒，且影片與音訊各自合計不超過 15 秒；本機單一影片上限 50 MB、單一音訊上限 15 MB。
+- 完整 JSON 請求體（含 base64 膨脹後的圖片、影片、音訊）上限 64 MB。大型素材建議改用公網 URL；URL 素材的時長與大小交由上游驗證。
 
 #### Seedance 2.0
 
@@ -335,9 +338,9 @@ MiniMax H3 不保證可重現。實測在關閉 `prompt_optimizer`、固定相�
 
 代表等待時間超過 `max_wait`（預設 900 秒）。請調高 `max_wait` 至 1800–3600 秒，特別是生成 `2K` 或較長的影片時。請注意逾時只是節點停止等待，上游任務仍在執行且已經計費；MiniMax H3 沒有事後取件節點，因此逾時無法再取回該次結果。
 
-### 多模態參考回報 `billing requires at least one reference video`
+### 多模態參考只有音訊時報錯
 
-DMXAPI 對「多模態參考生視頻」這個計費項目要求請求中至少有一段參考影片，只帶參考圖不受理（官方欄位文件沒寫這條）。在 `reference_video_urls` 填入一段公網影片 URL 即可；若本來就只想用圖片生成，請改用 `DMXAPI MiniMax 影片生成` 並把圖片接到 `first_frame`。
+MiniMax H3 不接受只有 `reference_audio` 的參考組合。請再提供至少一張 `reference_images`／`reference_image_urls` 圖片，或一段 `reference_video_1`～`reference_video_3`／`reference_video_urls` 影片；只使用參考圖片則是合法的，不需要額外附加影片。
 
 ### 影片影格造成記憶體不足
 

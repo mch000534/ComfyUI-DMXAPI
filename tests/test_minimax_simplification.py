@@ -1,9 +1,15 @@
+import base64
 import importlib.util
 import inspect
+import io
 import pathlib
 import sys
+import types
 import unittest
-from unittest.mock import Mock
+import wave
+from unittest.mock import Mock, patch
+
+import torch
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -24,10 +30,125 @@ def load_package():
 
 
 PACKAGE = load_package()
+COMMON = sys.modules[PACKAGE_NAME + ".dmxapi_common"]
 MINIMAX = sys.modules[PACKAGE_NAME + ".dmxapi_minimax_h3_nodes"]
 
 
 class MiniMaxSimplificationTests(unittest.TestCase):
+    def test_audio_to_wav_data_url_encodes_first_batch_as_pcm16(self):
+        audio = {
+            "waveform": torch.zeros((2, 2, 32000)),
+            "sample_rate": 16000,
+        }
+
+        data_url, duration, raw_size = COMMON.audio_to_wav_data_url(audio)
+
+        self.assertTrue(data_url.startswith("data:audio/wav;base64,"))
+        raw = base64.b64decode(data_url.split(",", 1)[1])
+        with wave.open(io.BytesIO(raw), "rb") as wav_file:
+            self.assertEqual(wav_file.getnchannels(), 2)
+            self.assertEqual(wav_file.getsampwidth(), 2)
+            self.assertEqual(wav_file.getframerate(), 16000)
+            self.assertEqual(wav_file.getnframes(), 32000)
+        self.assertEqual(duration, 2.0)
+        self.assertEqual(raw_size, len(raw))
+
+    def test_video_to_data_url_reads_comfy_video_stream(self):
+        class FakeVideo:
+            def get_duration(self):
+                return 4.0
+
+            def get_container_format(self):
+                return "mov,mp4,m4a,3gp,3g2,mj2"
+
+            def get_stream_source(self):
+                return io.BytesIO(b"fake-mp4")
+
+        data_url, duration, raw_size = COMMON.video_to_data_url(FakeVideo())
+
+        self.assertEqual(data_url, "data:video/mp4;base64,ZmFrZS1tcDQ=")
+        self.assertEqual(duration, 4.0)
+        self.assertEqual(raw_size, 8)
+
+    def test_video_to_data_url_transcodes_unsupported_container_lazily(self):
+        class FakeVideo:
+            def __init__(self):
+                self.saved_with = None
+
+            def get_duration(self):
+                return 3.0
+
+            def get_container_format(self):
+                return "webm"
+
+            def save_to(self, output, format, codec):
+                self.saved_with = (format, codec)
+                output.write(b"fake-transcoded-mp4")
+
+        class FakeVideoContainer:
+            MP4 = object()
+
+        class FakeVideoCodec:
+            H264 = object()
+
+        comfy_api = types.ModuleType("comfy_api")
+        comfy_api.__path__ = []
+        latest = types.ModuleType("comfy_api.latest")
+        latest.VideoContainer = FakeVideoContainer
+        latest.VideoCodec = FakeVideoCodec
+        video = FakeVideo()
+
+        with patch.dict(
+            sys.modules,
+            {"comfy_api": comfy_api, "comfy_api.latest": latest},
+        ):
+            data_url, duration, raw_size = COMMON.video_to_data_url(video)
+
+        self.assertTrue(data_url.startswith("data:video/mp4;base64,"))
+        self.assertEqual(video.saved_with, (FakeVideoContainer.MP4, FakeVideoCodec.H264))
+        self.assertEqual(duration, 3.0)
+        self.assertEqual(raw_size, len(b"fake-transcoded-mp4"))
+
+    def test_video_to_data_url_materializes_trimmed_mp4(self):
+        class FakeVideo:
+            def get_duration(self):
+                return 3.0
+
+            def get_container_format(self):
+                return "mov,mp4,m4a,3gp,3g2,mj2"
+
+            def get_active_trim_window(self):
+                return (1.0, 3.0)
+
+            def get_stream_source(self):
+                raise AssertionError("trimmed VIDEO must not reuse source bytes")
+
+            def save_to(self, output, format, codec):
+                output.write(b"trimmed-mp4")
+
+        class FakeVideoContainer:
+            MP4 = object()
+
+        class FakeVideoCodec:
+            H264 = object()
+
+        comfy_api = types.ModuleType("comfy_api")
+        comfy_api.__path__ = []
+        latest = types.ModuleType("comfy_api.latest")
+        latest.VideoContainer = FakeVideoContainer
+        latest.VideoCodec = FakeVideoCodec
+
+        with patch.dict(
+            sys.modules,
+            {"comfy_api": comfy_api, "comfy_api.latest": latest},
+        ):
+            data_url, _, _ = COMMON.video_to_data_url(FakeVideo())
+
+        self.assertEqual(
+            base64.b64decode(data_url.split(",", 1)[1]),
+            b"trimmed-mp4",
+        )
+
     def test_total_registered_node_count_is_eleven(self):
         self.assertEqual(len(PACKAGE.NODE_CLASS_MAPPINGS), 11)
 
@@ -82,6 +203,12 @@ class MiniMaxSimplificationTests(unittest.TestCase):
         optional = MINIMAX.DMXAPI_MiniMax_Reference2V.INPUT_TYPES()["optional"]
         self.assertNotIn("first_frame", optional)
         self.assertNotIn("last_frame", optional)
+
+    def test_reference_node_exposes_three_video_and_audio_inputs(self):
+        optional = MINIMAX.DMXAPI_MiniMax_Reference2V.INPUT_TYPES()["optional"]
+        for index in range(1, 4):
+            self.assertEqual(optional[f"reference_video_{index}"], ("VIDEO",))
+            self.assertEqual(optional[f"reference_audio_{index}"], ("AUDIO",))
 
     def test_removed_node_classes_are_absent(self):
         for name in (
@@ -229,6 +356,188 @@ class MiniMaxSimplificationTests(unittest.TestCase):
         # 首尾幀情境會省略 ratio，多模態參考則必須照送（上游文件明文接受）
         self.assertEqual(payload["ratio"], "adaptive")
 
+    def test_local_video_and_audio_precede_url_media(self):
+        node = self._mocked_reference_node()
+        with patch.object(
+            MINIMAX,
+            "video_to_data_url",
+            return_value=("data:video/mp4;base64,VjE=", 3.0, 2),
+        ), patch.object(
+            MINIMAX,
+            "audio_to_wav_data_url",
+            return_value=("data:audio/wav;base64,QTE=", 3.0, 2),
+        ):
+            self._reference_generate(
+                node,
+                reference_image_urls="",
+                reference_video_1=object(),
+                reference_audio_1={"waveform": object()},
+            )
+
+        items = node.run_task.call_args.args[0]["input"][1:]
+        self.assertEqual(
+            [item["role"] for item in items],
+            ["reference_video", "reference_video", "reference_audio"],
+        )
+        self.assertEqual(items[0]["video_url"]["url"], "data:video/mp4;base64,VjE=")
+        self.assertEqual(
+            items[1]["video_url"]["url"],
+            "https://example.invalid/v.mp4",
+        )
+        self.assertEqual(items[2]["audio_url"]["url"], "data:audio/wav;base64,QTE=")
+
+    def test_local_video_inputs_take_the_three_video_slots_before_urls(self):
+        node = self._mocked_reference_node()
+        local_urls = [
+            "data:video/mp4;base64,VjE=",
+            "data:video/mp4;base64,VjI=",
+        ]
+        with patch.object(
+            MINIMAX,
+            "video_to_data_url",
+            side_effect=[(url, 3.0, 2) for url in local_urls],
+        ):
+            self._reference_generate(
+                node,
+                reference_image_urls="",
+                reference_video_urls="\n".join(
+                    f"https://example.invalid/{index}.mp4" for index in range(3)
+                ),
+                reference_video_1=object(),
+                reference_video_2=object(),
+            )
+
+        videos = [
+            item["video_url"]["url"]
+            for item in node.run_task.call_args.args[0]["input"]
+            if item["type"] == "video_url"
+        ]
+        self.assertEqual(
+            videos,
+            local_urls + ["https://example.invalid/0.mp4"],
+        )
+
+    def test_local_images_take_the_nine_image_slots_before_urls(self):
+        node = self._mocked_reference_node()
+        local_urls = [f"data:image/jpeg;base64,{index}" for index in range(9)]
+        node._encode_images = Mock(return_value=local_urls)
+
+        self._reference_generate(
+            node,
+            reference_images=object(),
+            reference_image_urls="https://example.invalid/url.png",
+            reference_video_urls="",
+        )
+
+        images = [
+            item["image_url"]["url"]
+            for item in node.run_task.call_args.args[0]["input"]
+            if item["type"] == "image_url"
+        ]
+        self.assertEqual(images, local_urls)
+
+    def _assert_local_media_rejected(self, kind, helper_results, message_pattern,
+                                     max_bytes=None):
+        node = self._mocked_reference_node()
+        kwargs = {
+            "reference_image_urls": (
+                "https://example.invalid/a.png" if kind == "audio" else ""
+            ),
+            "reference_video_urls": "",
+        }
+        for index in range(len(helper_results)):
+            kwargs[f"reference_{kind}_{index + 1}"] = object()
+
+        helper_name = (
+            "video_to_data_url" if kind == "video" else "audio_to_wav_data_url"
+        )
+        patches = [patch.object(MINIMAX, helper_name, side_effect=helper_results)]
+        if max_bytes is not None:
+            constant_name = (
+                "MAX_REFERENCE_VIDEO_BYTES"
+                if kind == "video"
+                else "MAX_REFERENCE_AUDIO_BYTES"
+            )
+            patches.append(patch.object(MINIMAX, constant_name, max_bytes))
+
+        with patches[0]:
+            if len(patches) == 2:
+                with patches[1]:
+                    with self.assertRaisesRegex(ValueError, message_pattern):
+                        self._reference_generate(node, **kwargs)
+            else:
+                with self.assertRaisesRegex(ValueError, message_pattern):
+                    self._reference_generate(node, **kwargs)
+
+        node.resolve_key.assert_not_called()
+        node.run_task.assert_not_called()
+
+    def test_local_video_duration_limits_are_checked_before_api_work(self):
+        for name, results, pattern in (
+            ("too short", [("data:video/mp4;base64,AA==", 1.9, 1)], "影片.*2.*15"),
+            ("too long", [("data:video/mp4;base64,AA==", 15.1, 1)], "影片.*2.*15"),
+            (
+                "total too long",
+                [
+                    ("data:video/mp4;base64,AA==", 8.0, 1),
+                    ("data:video/mp4;base64,AQ==", 7.1, 1),
+                ],
+                "影片.*合計.*15",
+            ),
+        ):
+            with self.subTest(name=name):
+                self._assert_local_media_rejected("video", results, pattern)
+
+    def test_local_audio_duration_limits_are_checked_before_api_work(self):
+        for name, results, pattern in (
+            ("too short", [("data:audio/wav;base64,AA==", 1.9, 1)], "音訊.*2.*15"),
+            ("too long", [("data:audio/wav;base64,AA==", 15.1, 1)], "音訊.*2.*15"),
+            (
+                "total too long",
+                [
+                    ("data:audio/wav;base64,AA==", 8.0, 1),
+                    ("data:audio/wav;base64,AQ==", 7.1, 1),
+                ],
+                "音訊.*合計.*15",
+            ),
+        ):
+            with self.subTest(name=name):
+                self._assert_local_media_rejected("audio", results, pattern)
+
+    def test_local_media_size_limits_are_checked_before_api_work(self):
+        self._assert_local_media_rejected(
+            "video",
+            [("data:video/mp4;base64,AA==", 3.0, 11)],
+            "影片.*大小.*公網 URL",
+            max_bytes=10,
+        )
+        self._assert_local_media_rejected(
+            "audio",
+            [("data:audio/wav;base64,AA==", 3.0, 11)],
+            "音訊.*大小.*公網 URL",
+            max_bytes=10,
+        )
+
+    def test_complete_json_body_limit_is_checked_before_api_key(self):
+        node = self._mocked_reference_node()
+        oversized_data_url = "data:video/mp4;base64," + ("A" * 256)
+
+        with patch.object(
+            MINIMAX,
+            "video_to_data_url",
+            return_value=(oversized_data_url, 3.0, 1),
+        ), patch.object(MINIMAX, "MAX_BODY_BYTES", 128):
+            with self.assertRaisesRegex(ValueError, "請求體.*公網 URL"):
+                self._reference_generate(
+                    node,
+                    reference_image_urls="",
+                    reference_video_urls="",
+                    reference_video_1=object(),
+                )
+
+        node.resolve_key.assert_not_called()
+        node.run_task.assert_not_called()
+
     def test_reference_requires_some_reference_material(self):
         node = self._mocked_reference_node()
         with self.assertRaisesRegex(ValueError, "參考素材"):
@@ -237,11 +546,45 @@ class MiniMaxSimplificationTests(unittest.TestCase):
             )
         node.run_task.assert_not_called()
 
-    def test_reference_requires_at_least_one_video(self):
-        """DMXAPI 中轉的計費規則：只給參考圖會被上游 400 擋下，節點要先攔。"""
+    def test_reference_images_work_without_video(self):
+        """官方 H3 規格允許只用 reference_image，不應強制附加影片。"""
         node = self._mocked_reference_node()
-        with self.assertRaisesRegex(ValueError, "參考影片"):
-            self._reference_generate(node, reference_video_urls="")
+        result = self._reference_generate(node, reference_video_urls="")
+
+        self.assertEqual(result, "finished")
+        items = node.run_task.call_args.args[0]["input"]
+        self.assertEqual(
+            [item.get("role") for item in items[1:]],
+            ["reference_image"],
+        )
+
+    def test_reference_audio_cannot_be_the_only_material(self):
+        """reference_audio 必須搭配至少一張參考圖或一段參考影片。"""
+        node = self._mocked_reference_node()
+        with self.assertRaisesRegex(ValueError, "音訊.*圖片.*影片"):
+            self._reference_generate(
+                node,
+                reference_image_urls="",
+                reference_video_urls="",
+                reference_audio_urls="https://example.invalid/a.mp3",
+            )
+        node.run_task.assert_not_called()
+
+    def test_local_reference_audio_cannot_be_the_only_material(self):
+        node = self._mocked_reference_node()
+        with patch.object(
+            MINIMAX,
+            "audio_to_wav_data_url",
+            return_value=("data:audio/wav;base64,QTE=", 3.0, 2),
+        ):
+            with self.assertRaisesRegex(ValueError, "音訊.*圖片.*影片"):
+                self._reference_generate(
+                    node,
+                    reference_image_urls="",
+                    reference_video_urls="",
+                    reference_audio_1=object(),
+                )
+        node.resolve_key.assert_not_called()
         node.run_task.assert_not_called()
 
     def test_reference_requires_prompt(self):

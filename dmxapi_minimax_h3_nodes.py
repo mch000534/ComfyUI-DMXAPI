@@ -10,6 +10,7 @@
 """
 
 import base64
+import json
 
 from .dmxapi_common import (
     H3_REFERENCE_RATIOS,
@@ -17,6 +18,7 @@ from .dmxapi_common import (
     MINIMAX_RATIOS,
     RESPONSES_URL,
     DMXAPIVideoNodeBase,
+    audio_to_wav_data_url,
     duration_seconds,
     logger,
     poll_task,
@@ -24,6 +26,7 @@ from .dmxapi_common import (
     resolve_api_key,
     tensor_to_data_url,
     tensor_to_image_bytes,
+    video_to_data_url,
 )
 
 MINIMAX_MODEL = "MiniMax-H3"
@@ -227,15 +230,11 @@ MAX_REFERENCE_VIDEOS = 3      # role=reference_video 最多 3 段，總長 <= 15
 MAX_REFERENCE_AUDIOS = 3      # role=reference_audio 最多 3 段，總長 <= 15 秒
 PROMPT_MAX_CHARS = 7000       # text 項上限
 MAX_BODY_BYTES = 64 * 1024 * 1024   # 請求體總大小上限
+REFERENCE_DURATION_RANGE = (2.0, 15.0)
+MAX_REFERENCE_VIDEO_BYTES = 50 * 1024 * 1024
+MAX_REFERENCE_AUDIO_BYTES = 15 * 1024 * 1024
 IMAGE_MIN_SIDE = 256          # 參考圖寬高需落在 [256, 5760]，上限由 REFERENCE_MAX_SIDE 保證
 IMAGE_RATIO_RANGE = (0.4, 2.5)      # 參考圖寬高比允許區間
-
-# DMXAPI 中轉對「多模態參考」這個計費項目要求 input 內必須含至少一段
-# role=reference_video；只給參考圖會被上游以
-#   400 {"code": "dmxapi_billing_error", "message": "billing requires at least one reference video"}
-# 擋下（官方文件把三種素材都寫成選填，但中轉的計費規則不是，實測確認）。
-# 這條規則屬於中轉而非 MiniMax 本身，日後若放寬，改掉這個旗標即可。
-REQUIRE_REFERENCE_VIDEO = True
 
 # 內嵌圖片縮到的長邊上限。上游允許到 5760，但 base64 是算進那 64 MB 請求體的，
 # 而參考用途不需要原尺寸——9 張原尺寸 2K 照片很容易就把體積推爆。
@@ -260,6 +259,33 @@ def _media_items(kind, urls):
     return [{"type": key, "role": "reference_" + kind, key: {"url": url}} for url in urls]
 
 
+def _validate_local_media(entries, label, max_bytes):
+    """在付費提交前檢查本機影音的單段時長、合計時長與編碼大小。"""
+    minimum, maximum = REFERENCE_DURATION_RANGE
+    total_duration = 0.0
+    for index, (_, duration, byte_count) in enumerate(entries, start=1):
+        duration = float(duration)
+        byte_count = int(byte_count)
+        if not minimum <= duration <= maximum:
+            raise ValueError(
+                "[DMXAPI Error] 第 %s 段本機參考%s時長 %.2f 秒，必須介於 %.0f～%.0f 秒。"
+                % (index, label, duration, minimum, maximum)
+            )
+        if byte_count > max_bytes:
+            raise ValueError(
+                "[DMXAPI Error] 第 %s 段本機參考%s大小 %.1f MB，超過 %.0f MB 上限。"
+                "請縮小素材，或改用公網 URL。"
+                % (index, label, byte_count / 1048576.0, max_bytes / 1048576.0)
+            )
+        total_duration += duration
+
+    if total_duration > maximum:
+        raise ValueError(
+            "[DMXAPI Error] 本機參考%s合計時長 %.2f 秒，不可超過 %.0f 秒。"
+            % (label, total_duration, maximum)
+        )
+
+
 class DMXAPI_MiniMax_Reference2V(MiniMaxVideoBase):
     """多模態參考生影片（H3）：用參考圖、參考影片與參考音訊指定主體、動作與音色。
 
@@ -267,8 +293,8 @@ class DMXAPI_MiniMax_Reference2V(MiniMaxVideoBase):
     再出現 ``first_frame`` / ``last_frame``。因此這個節點刻意不提供影格輸入，
     首尾幀請改用「DMXAPI MiniMax 影片生成」。
 
-    參考素材可以是 ComfyUI 的 IMAGE（節點自行編成 data URI），也可以是公網 URL；
-    影片與音訊上游只收 URL，無法從畫布傳入。
+    參考素材可以來自 ComfyUI 的 IMAGE／VIDEO／AUDIO 插口，也可以是公網 URL；
+    本機素材會轉成 data URI，本機插口先占各類素材的數量額度。
     """
 
     @classmethod
@@ -281,17 +307,23 @@ class DMXAPI_MiniMax_Reference2V(MiniMaxVideoBase):
             ),
             "optional": {
                 "reference_images": ("IMAGE",),
+                "reference_video_1": ("VIDEO",),
+                "reference_video_2": ("VIDEO",),
+                "reference_video_3": ("VIDEO",),
+                "reference_audio_1": ("AUDIO",),
+                "reference_audio_2": ("AUDIO",),
+                "reference_audio_3": ("AUDIO",),
                 "reference_image_urls": ("STRING", {
                     "multiline": True, "default": "",
                     "placeholder": "每行一個公網圖片 URL；與 reference_images 合計最多 9 張",
                 }),
                 "reference_video_urls": ("STRING", {
                     "multiline": True, "default": "",
-                    "placeholder": "必填：每行一個公網影片 URL（MP4/MOV），最多 3 段、總長 15 秒",
+                    "placeholder": "每行一個公網影片 URL（MP4/MOV）；與 VIDEO 合計最多 3 段",
                 }),
                 "reference_audio_urls": ("STRING", {
                     "multiline": True, "default": "",
-                    "placeholder": "每行一個公網音訊 URL（WAV/MP3），最多 3 段、總長 15 秒",
+                    "placeholder": "每行一個公網音訊 URL（WAV/MP3）；與 AUDIO 合計最多 3 段",
                 }),
             },
         }
@@ -324,14 +356,14 @@ class DMXAPI_MiniMax_Reference2V(MiniMaxVideoBase):
         count = int(images.shape[0])
         if budget <= 0:
             logger.warning(
-                "[DMXAPI] 參考圖 URL 已佔滿上游的 %s 張額度，reference_images 全數略過。",
+                "[DMXAPI] 參考圖額度已用完（上限 %s 張），reference_images 全數略過。",
                 MAX_REFERENCE_IMAGES,
             )
             return []
 
         if count > budget:
             logger.warning(
-                "[DMXAPI] reference_images 收到 %s 張，連同 URL 已達上限 %s 張，只送出前 %s 張。",
+                "[DMXAPI] reference_images 收到 %s 張，超過上游上限 %s 張，只送出前 %s 張。",
                 count, MAX_REFERENCE_IMAGES, budget,
             )
             count = budget
@@ -346,38 +378,66 @@ class DMXAPI_MiniMax_Reference2V(MiniMaxVideoBase):
             data_urls.append("data:" + mime + ";base64," + base64.b64encode(raw).decode("utf-8"))
         return data_urls
 
-    def build_reference_items(self, reference_images, image_urls, video_urls, audio_urls):
-        """把四種來源收斂成 input 陣列裡的參考項目（不含 text）。"""
-        urls = _url_lines(image_urls, MAX_REFERENCE_IMAGES, "reference_image_urls")
+    def build_reference_items(self, reference_images, image_urls, video_urls, audio_urls,
+                              reference_videos=(), reference_audios=()):
+        """把本機插口與 URL 收斂成 input 陣列裡的參考項目（不含 text）。"""
         embedded = []
         if reference_images is not None:
-            embedded = self._encode_images(reference_images, MAX_REFERENCE_IMAGES - len(urls))
+            embedded = self._encode_images(reference_images, MAX_REFERENCE_IMAGES)
+        urls = _url_lines(
+            image_urls,
+            MAX_REFERENCE_IMAGES - len(embedded),
+            "reference_image_urls",
+        )
 
-        videos = _url_lines(video_urls, MAX_REFERENCE_VIDEOS, "reference_video_urls")
-        audios = _url_lines(audio_urls, MAX_REFERENCE_AUDIOS, "reference_audio_urls")
+        local_videos = [
+            video_to_data_url(video)
+            for video in reference_videos
+            if video is not None
+        ][:MAX_REFERENCE_VIDEOS]
+        _validate_local_media(local_videos, "影片", MAX_REFERENCE_VIDEO_BYTES)
+        videos = _url_lines(
+            video_urls,
+            MAX_REFERENCE_VIDEOS - len(local_videos),
+            "reference_video_urls",
+        )
+
+        local_audios = [
+            audio_to_wav_data_url(audio)
+            for audio in reference_audios
+            if audio is not None
+        ][:MAX_REFERENCE_AUDIOS]
+        _validate_local_media(local_audios, "音訊", MAX_REFERENCE_AUDIO_BYTES)
+        audios = _url_lines(
+            audio_urls,
+            MAX_REFERENCE_AUDIOS - len(local_audios),
+            "reference_audio_urls",
+        )
+
+        local_video_urls = [entry[0] for entry in local_videos]
+        local_audio_urls = [entry[0] for entry in local_audios]
 
         items = (_media_items("image", embedded + urls)
-                 + _media_items("video", videos)
-                 + _media_items("audio", audios))
+                 + _media_items("video", local_video_urls + videos)
+                 + _media_items("audio", local_audio_urls + audios))
 
         embedded_bytes = sum(len(url) for url in embedded)
-        if embedded_bytes > MAX_BODY_BYTES:
-            raise ValueError(
-                "[DMXAPI Error] 內嵌參考圖共 %.1f MB，超過上游 64 MB 的請求體上限。"
-                "請減少張數，或改用公網 URL。" % (embedded_bytes / 1048576.0)
-            )
 
         logger.info(
-            "[DMXAPI] 多模態參考：圖片 %s 張（內嵌 %s、URL %s，內嵌共 %.1f KB）、影片 %s 段、音訊 %s 段",
+            "[DMXAPI] 多模態參考：圖片 %s 張（內嵌 %s、URL %s，內嵌共 %.1f KB）、"
+            "影片 %s 段（本機 %s）、音訊 %s 段（本機 %s）",
             len(embedded) + len(urls), len(embedded), len(urls),
-            embedded_bytes / 1024.0, len(videos), len(audios),
+            embedded_bytes / 1024.0, len(local_videos) + len(videos), len(local_videos),
+            len(local_audios) + len(audios), len(local_audios),
         )
         return items
 
     def generate(self, prompt, resolution, ratio, duration, noise_seed, model, api_key,
                  prompt_optimizer, download_video, max_frames, save_dir, poll_interval, max_wait,
                  reference_images=None, reference_image_urls="", reference_video_urls="",
-                 reference_audio_urls=""):
+                 reference_audio_urls="", reference_video_1=None, reference_video_2=None,
+                 reference_video_3=None, reference_audio_1=None, reference_audio_2=None,
+                 reference_audio_3=None):
         self.validate_model(model)
 
         text = prompt.strip()
@@ -393,28 +453,42 @@ class DMXAPI_MiniMax_Reference2V(MiniMaxVideoBase):
 
         items = self.build_reference_items(
             reference_images, reference_image_urls, reference_video_urls, reference_audio_urls,
+            reference_videos=(reference_video_1, reference_video_2, reference_video_3),
+            reference_audios=(reference_audio_1, reference_audio_2, reference_audio_3),
         )
         if not items:
             raise ValueError(
-                "[DMXAPI Error] 沒有任何參考素材。請接上 reference_images，"
-                "或填入參考圖／影片／音訊的公網 URL；"
+                "[DMXAPI Error] 沒有任何參考素材。請接上 reference_images、"
+                "reference_video_* 或 reference_audio_*，或填入參考素材的公網 URL；"
                 "純文生影片與首尾幀請改用「DMXAPI MiniMax 影片生成」節點。"
             )
 
-        if REQUIRE_REFERENCE_VIDEO and not any(item["type"] == "video_url" for item in items):
+        has_image = any(item["type"] == "image_url" for item in items)
+        has_video = any(item["type"] == "video_url" for item in items)
+        has_audio = any(item["type"] == "audio_url" for item in items)
+        if has_audio and not (has_image or has_video):
             raise ValueError(
-                "[DMXAPI Error] 多模態參考生影片至少需要一段參考影片。"
-                "DMXAPI 中轉對這個計費項目要求 input 內含 role=reference_video，"
-                "只給參考圖會被上游以 400 dmxapi_billing_error 拒絕。"
-                "請在 reference_video_urls 填入至少一段公網影片 URL；"
-                "若只想用圖片生成，請改用「DMXAPI MiniMax 影片生成」節點的 first_frame。"
+                "[DMXAPI Error] 參考音訊不能單獨使用，必須同時提供至少一張參考圖片"
+                "或一段參考影片。"
             )
 
-        token = self.resolve_key(api_key)
         payload = self.build_h3_payload(
             text, ratio, resolution, duration, prompt_optimizer, noise_seed,
             extra_items=items, send_ratio=True,
         )
+        body_bytes = len(json.dumps(
+            payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8"))
+        if body_bytes > MAX_BODY_BYTES:
+            raise ValueError(
+                "[DMXAPI Error] 多模態請求體編碼後共 %.1f MB，超過上游 %.0f MB 上限。"
+                "請減少本機素材，或改用公網 URL。"
+                % (body_bytes / 1048576.0, MAX_BODY_BYTES / 1048576.0)
+            )
+
+        token = self.resolve_key(api_key)
         video_url, task_id = self.run_task(payload, token, poll_interval, max_wait)
         return self.finish(video_url, task_id, download_video, max_frames, save_dir, "minimax_ref")
 

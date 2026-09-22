@@ -171,17 +171,25 @@ MiniMax 有兩個節點：`DMXAPI_MiniMax_Video`（首尾幀）與 `DMXAPI_MiniM
   「只有純文字才送」的規則，`True` = 一律送。**不要把它改回用 `len(items)` 推斷。**
 - 硬性限制全部抄在模組常數裡（照文件，不要憑印象調）：圖片 ≤ 9 張、影片 ≤ 3 段、
   音訊 ≤ 3 段（影音各自單段 2~15 秒、總長 ≤ 15 秒）、prompt ≤ 7000 字且**必須非空**、
-  請求體總大小 ≤ 64 MB、參考圖寬高 [256, 5760] 且比例 [0.4, 2.5]。
+  單一影片 ≤ 50 MB、單一音訊 ≤ 15 MB、請求體總大小 ≤ 64 MB、參考圖寬高
+  [256, 5760] 且比例 [0.4, 2.5]。
   數量超限一律截斷並示警（同 Agnes 的做法），不直接報錯。
 - 參考圖可以來自 ComfyUI 的 `IMAGE`（節點逐張編成 data URI，JPEG q95、長邊縮到
   `REFERENCE_MAX_SIDE` = 2048）或公網 URL，兩者合計計入 9 張的額度，**內嵌的排在 URL 前面**。
-  縮圖不只是省流量：base64 是算進那 64 MB 請求體的。影片與音訊上游只收 URL，
-  無法從畫布傳入，所以節點只開多行字串欄位（一行一個 URL）。
-- **中轉的計費規則：至少要有一段 `reference_video`**（`REQUIRE_REFERENCE_VIDEO`）。官方文件把
-  三種素材都寫成選填，但只給參考圖時 DMXAPI 會回
-  `400 {"code": "dmxapi_billing_error", "message": "billing requires at least one reference video"}`
-  ——實測確認。節點在送出前就擋下並指路（要純圖片就用首幀），避免白等一輪 400。
-  這是中轉而非 MiniMax 本身的限制，日後放寬只要改掉那個旗標。
+  縮圖不只是省流量：base64 是算進那 64 MB 請求體的。
+- 參考影片可由 `reference_video_1..3` 接 ComfyUI `VIDEO`，參考音訊可由
+  `reference_audio_1..3` 接 `AUDIO`；原有三個 URL 多行欄位全部保留。同類素材一律本機在前、
+  URL 補足剩餘額度。本機影音在解析 key 前檢查單段與合計時長、單檔大小；URL 不預先下載，
+  其時長與大小留給上游驗證。
+- 本機影音的序列化集中在 `dmxapi_common.py`：`video_to_data_url()` 對 MP4/MOV 沿用原始 bytes，
+  其他容器才透過 `VIDEO.save_to()` 轉成 MP4/H.264（保留影片內音軌）；
+  `audio_to_wav_data_url()` 取 AUDIO batch 第一筆並轉成 PCM16 WAV。`comfy_api` 只能在需要轉碼時
+  延遲 import；不得搬到模組頂層，也不得在 MiniMax 節點模組另寫 base64。
+- 64 MB 限制必須用完整 payload 的 compact JSON bytes 計算，包含 base64 膨脹後的圖片、影片、
+  音訊，而且要在 `resolve_key()` 與付費提交前完成；不可退回只計內嵌圖片字串的舊檢查。
+- 參考圖片、影片可單獨或混合使用；**參考音訊不能是唯一素材**，必須搭配至少一張
+  `reference_image` 或一段 `reference_video`。這是 MiniMax H3 的正式輸入規則，不要再加回
+  「至少要有一段參考影片」的舊中轉限制，否則合法的多圖參考 workflow 會被本地提前擋下。
 - 沒有任何參考素材時直接報錯並指回 `DMXAPI_MiniMax_Video`——不帶素材時它就只是文生影片，
   而且 `ratio=adaptive` 在那個情境是非法值。
 

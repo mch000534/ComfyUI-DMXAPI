@@ -82,10 +82,10 @@ GPT 節點的畫布顯示名稱是 `DMXAPI GPT Image`；模組檔名 `dmxapi_gpt
 | 端點 | 使用者 | 型態 |
 | --- | --- | --- |
 | `POST /v1/images/generations` | GPT Image 2／2.5（`gpt_image2` 純文生圖）、agnes | 同步，OpenAI 相容 JSON，直接回傳 `data[].b64_json` 或 `url` |
-| `POST /v1/images/edits` | GPT Image 2／2.5（`gpt_image2` 帶 `image` 時） | 同步，**multipart/form-data**，回傳格式同上 |
+| `POST /v1/images/edits` | GPT Image 2／2.5（`gpt_image2` 帶 `image` 時） | 同步，**multipart/form-data**，回傳交由解析器接受 `b64_json` 或 URL |
 | `POST /v1/responses` | minimax | 非同步，提交 → 輪詢 |
 
-**GPT Image 2／2.5 的參考圖不能塞進 generations 的 payload**：上游會回 400 `Unknown parameter: 'image'`（實測確認）。（Agnes 是另一回事——它的參考圖走同一個端點的 `extra_body.image`，見下節。）`generations` 是純文生圖端點，圖生圖一律走 `edits`，而且圖是 multipart 的**檔案欄位**，不是 base64 字串——所以 `_submit_edit()` 用 `common.tensor_to_image_bytes()` 取原始 bytes 走 `common.post_multipart()`，不用 `tensor_to_data_url()`。2.5 文生圖依文件與上游預設省略 `response_format`，舊版 2 文生圖則保留 `response_format="b64_json"`。`edits` 也不送 `response_format`，避免再吃一次 `unknown_parameter`；回傳由 `fetch_image_item()` 判讀（`b64_json` 與 `url` 都吃）。
+**GPT Image 2／2.5 的參考圖不能塞進 generations 的 payload**：上游會回 400 `Unknown parameter: 'image'`（實測確認）。（Agnes 是另一回事——它的參考圖走同一個端點的 `extra_body.image`，見下節。）`generations` 是純文生圖端點，圖生圖一律走 `edits`，而且圖是 multipart 的**檔案欄位**，不是 base64 字串——所以 `_submit_edit()` 用 `common.tensor_to_image_bytes()` 取原始 bytes 走 `common.post_multipart()`，不用 `tensor_to_data_url()`。2.5 文生圖依文件與上游預設省略 `response_format`，舊版 2 文生圖則保留 `response_format="b64_json"`。`edits` 也不送 `response_format`，避免再吃一次 `unknown_parameter`；`fetch_image_item()` 的解析能力涵蓋 `b64_json` 與 URL，但這不表示上游保證兩種格式都會回傳。
 
 ### Agnes Image 2.1 Flash 的參數事實（依官方文件）
 
@@ -113,12 +113,12 @@ GPT 節點的畫布顯示名稱是 `DMXAPI GPT Image`；模組檔名 `dmxapi_gpt
 
 文件：GPT Image 2 [文生圖](https://doc.dmxapi.cn/gpt-image-2-text-to-image.html)、[圖片編輯](https://doc.dmxapi.cn/gpt-image-2-image-edit.html)；GPT Image 2.5 [文生圖](https://doc.dmxapi.cn/gpt-image-2.5-text-to-image.html)、[圖片編輯](https://doc.dmxapi.cn/gpt-image-2.5-image-edit.html)。
 
-- **2.5 模型變體**：`gpt-image-2.5-sunburst`、`gpt-image-2.5-sunburst-cdx`、`gpt-image-2.5-sunburst-ssvip`、`gpt-image-2.5-flare`、`gpt-image-2.5-flare-cdx`、`gpt-image-2.5-flare-ssvip`。`sunburst` 基礎型號是新預設、品質優先；`flare` 家族速度優先，是同步端點逾時時的模型切換首選。
-- **文件證據邊界**：官方 2.5 頁面列出 `sunburst` 與 `flare` 基礎 ID，並說明 CDX 的張數限制；兩個 `-ssvip` 變體是使用者實測確認可用。不要寫成官方頁面逐項列出上述六個完整 ID。
+- **2.5 模型變體**：`gpt-image-2.5-sunburst`、`gpt-image-2.5-sunburst-cdx`、`gpt-image-2.5-sunburst-ssvip`、`gpt-image-2.5-flare`、`gpt-image-2.5-flare-cdx`、`gpt-image-2.5-flare-ssvip`。六個都是使用者確認可用、由節點公開的選項。`sunburst` 基礎型號是節點的新預設、品質優先；只有 `gpt-image-2.5-flare` 基礎型號有速度優先的依據，是同步端點逾時時的模型切換首選。
+- **文件證據邊界**：官方 2.5 頁面列出 `sunburst` 與 `flare` 基礎 ID，文生圖頁面另提及 `gpt-image-2.5-sunburst-cdx` 與 `gpt-image-2.5-flare-cdx` 的 `n<=3` 限制；兩個 `-ssvip` ID 是使用者確認。依使用者需求，後綴變體已實作與基礎型號一致的文生圖／圖片編輯路由，但本次沒有對每個後綴與兩個端點逐一執行付費冒煙測試。不要把「節點已實作」寫成「官方在兩個端點逐項記載且都已實測」。
 - **舊版模型仍保留**：`gpt-image-2-03`、`gpt-image-2`、`gpt-image-2-ssvip`。
 - **`quality`**：節點順序固定為 `auto` / `low` / `medium` / `high` / `xhigh` / `max`，預設 `auto` 且不送欄位。`xhigh`、`max` 僅限 2.5；舊版模型選到這兩個值時，必須在解析 key 與付費提交前本地拒絕。降低 quality 仍是撞上 60 秒上限時的第一順位解法。
 - **張數限制**：`gpt-image-2-03` 最多 `n=1`；`gpt-image-2.5-sunburst-cdx`、`gpt-image-2.5-flare-cdx` 最多 `n=3`；其他模型由節點的 `batch_size` 上限限制為 4。`MODEL_BATCH_LIMITS` 負責前述特殊上限；`SINGLE_IMAGE_ONLY_MODELS` 僅為既有外部 workflow／測試保留。
-- **回傳格式**：2.5 純文生圖不送 `response_format`，舊版 2 純文生圖固定送 `b64_json`；圖片編輯不送該欄位，並以 `fetch_image_item()` 同時接受 `b64_json` 與 URL。
+- **回傳格式**：2.5 純文生圖不送 `response_format`，舊版 2 純文生圖固定送 `b64_json`；圖片編輯不送該欄位。`fetch_image_item()` 解析器同時接受 `b64_json` 與 URL，這是節點能力，不是上游對兩種回傳格式的保證。
 - **`edits` 的 `image` 其實支援多張與公網 URL**，目前節點只送 batch 第一張，多張時記 warning。要做多參考圖時從這裡下手。
 - 其他未接的參數：`background`、`output_format`（`png` / `jpeg` / `webp`）、`output_compression`。
 - **沒有非同步模式**：gpt-image 系列沒有 `task_id` 或 `callback_url`，所以同步的 60 秒上限**沒有繞路可走**，只能靠 quality / 模型 / 尺寸 / prompt 長度把生成時間壓進去。新增節點前不要再花時間找非同步端點。
@@ -322,8 +322,8 @@ Key 的解析優先序：**節點輸入 > `DMXAPI_KEY` > 模組專屬環境變�
 調成不重試則會丟掉像 `2048x1152` 那種本來會成功的情況。
 
 同步端點沒有 task_id 可以事後取件。撞到上限時依序：先把 `quality` 降到 `medium` 或
-`low`；再改用速度優先的 `gpt-image-2.5-flare`、`gpt-image-2.5-flare-cdx` 或
-`gpt-image-2.5-flare-ssvip`；接著縮小尺寸，並指定明確 `size` 而不是 `size="auto"`
+`low`；再改用有速度優先依據的基礎型號 `gpt-image-2.5-flare`；接著縮小尺寸，並指定明確
+`size` 而不是 `size="auto"`
 （`auto` 的輸出尺寸跟著參考圖走，圖大就慢；超過 `SLOW_SIZE_PIXELS` 時節點會先記一筆
 warning）；最後縮短 prompt，並縮小或減少參考圖，因為上傳時間也算在約 60 秒的回應上限內。
 影片節點走非同步端點，提交後就有 task_id，不受這個上限影響。

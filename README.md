@@ -115,18 +115,18 @@ setx DMXAPI_KEY "sk-your-key"
 4. 如需圖生圖，將 ComfyUI 的 `IMAGE` 接到節點的 `image` 輸入。
 5. 將 `IMAGE` 輸出接到預覽、儲存或後續工作流。
 
-`DMXAPI GPT Image` 同時支援 GPT Image 2 與 2.5。純文生圖使用 `/v1/images/generations` JSON；帶參考圖時自動改用 `/v1/images/edits` multipart。2.5 純文生圖依官方預設省略 `response_format`，舊版 2 模型則保留 `b64_json`；圖片編輯的回傳可為 `b64_json` 或 URL，節點都能解析。Agnes Image 2.1 Flash 的文生圖與圖生圖則都使用 `/v1/images/generations`，參考圖放在 `extra_body.image`。
+`DMXAPI GPT Image` 同時支援 GPT Image 2 與 2.5。純文生圖使用 `/v1/images/generations` JSON；帶參考圖時自動改用 `/v1/images/edits` multipart。2.5 純文生圖依官方預設省略 `response_format`，舊版 2 模型則保留 `b64_json`；圖片編輯不預設回傳格式，節點解析器同時接受 `b64_json` 與 URL。Agnes Image 2.1 Flash 的文生圖與圖生圖則都使用 `/v1/images/generations`，參考圖放在 `extra_body.image`。
 
 GPT Image 2.5 提供以下六個模型 ID：
 
-- `gpt-image-2.5-sunburst`（新預設，品質優先）
+- `gpt-image-2.5-sunburst`（節點的新預設，品質優先）
 - `gpt-image-2.5-sunburst-cdx`
 - `gpt-image-2.5-sunburst-ssvip`
 - `gpt-image-2.5-flare`（速度優先）
-- `gpt-image-2.5-flare-cdx`（速度優先）
-- `gpt-image-2.5-flare-ssvip`（速度優先）
+- `gpt-image-2.5-flare-cdx`
+- `gpt-image-2.5-flare-ssvip`
 
-舊版 `gpt-image-2-03`、`gpt-image-2`、`gpt-image-2-ssvip` 仍保留。官方 2.5 頁面列出 `sunburst` 與 `flare` 基礎 ID，並說明 CDX 的張數限制；兩個 `-ssvip` 變體的可用性來自使用者實測確認，不代表每個後綴都由官方頁面逐項列出。
+上述六個型號都是使用者確認可用、由節點公開的選項。官方 2.5 頁面列出 `sunburst` 與 `flare` 基礎 ID，文生圖頁面另提及 `gpt-image-2.5-sunburst-cdx` 與 `gpt-image-2.5-flare-cdx` 的 `n<=3` 限制；兩個 `-ssvip` ID 則由使用者確認。依使用者需求，節點已為後綴變體實作與基礎型號一致的文生圖／圖片編輯端點路由，但本次未對每個後綴與兩個端點逐一進行付費冒煙測試。舊版 `gpt-image-2-03`、`gpt-image-2`、`gpt-image-2-ssvip` 仍保留。
 
 `quality` 可選 `auto`、`low`、`medium`、`high`、`xhigh`、`max`；`xhigh` 與 `max` 僅限 2.5，舊版模型選到時會在送出請求前被本地拒絕。`gpt-image-2-03` 單次最多 1 張，`gpt-image-2.5-sunburst-cdx` 與 `gpt-image-2.5-flare-cdx` 單次最多 3 張，其餘模型由節點限制為最多 4 張。
 
@@ -310,7 +310,7 @@ PYTHONDONTWRITEBYTECODE=1 /path/to/ComfyUI/.venv/bin/python -c "import importlib
 
 ### 圖像生成逾時或連線被上游切斷
 
-同步圖像端點約有 60 秒回應限制。請依序嘗試：降低 `quality`、改用速度優先的完整 flare 家族（`gpt-image-2.5-flare`、`gpt-image-2.5-flare-cdx`、`gpt-image-2.5-flare-ssvip`）、指定較小的 `size`（如 `1024x1024` 或 `2048x1152`）、縮短 prompt，並縮小或減少參考圖。請注意請求送出後才中斷，可能代表上游已收單並計費，避免盲目重複執行。
+同步圖像端點約有 60 秒回應限制。請依序嘗試：降低 `quality`、改用有速度優先依據的基礎型號 `gpt-image-2.5-flare`、指定較小的 `size`（如 `1024x1024` 或 `2048x1152`）、縮短 prompt，並縮小或減少參考圖。請注意請求送出後才中斷，可能代表上游已收單並計費，避免盲目重複執行。
 
 ### 影片沒有內嵌播放器
 

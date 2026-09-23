@@ -9,7 +9,8 @@ DMXAPI 節點選單目前註冊 7 個 Seedance 2.0 節點。使用者要求完�
 
 ## 移除範圍
 
-- 刪除 `dmxapi_seedance2.py` 與已受 Git 追蹤的 `__pycache__/dmxapi_seedance2.cpython-312.pyc`，包含 6 個生成節點、1 個下載節點、Seedance 輪詢與回應解析。
+- 刪除 `dmxapi_seedance2.py`，包含 6 個生成節點、1 個下載節點、Seedance 輪詢與回應解析。
+- 刪除所有受 Git 追蹤的 `__pycache__/*.pyc`。這類通用編譯快取可能仍內嵌已刪除的 Seedance 名稱或程式碼；產生物已由 `.gitignore` 排除，不應納入版本控制。
 - 從 `__init__.py` 移除 Seedance 模組 import 與 `_MODULES` 註冊。
 - 從 `dmxapi_common.py` 移除只供 Seedance 使用的比例、解析度檔位、尺寸換算函式、尺寸輸入定義，以及因此不再使用的 `math` import；保留 MiniMax 仍使用的時長與影片共用功能。
 - 從 `.env.example` 移除 `SEEDANCE_API_KEY` 與 `ARK_API_KEY`。
@@ -26,7 +27,7 @@ DMXAPI 節點選單目前註冊 7 個 Seedance 2.0 節點。使用者要求完�
 
 這是刻意的破壞性變更。既有 workflow 若包含任何 `DMXAPI_Seedance2_*` 節點，重啟 ComfyUI 後會顯示缺失節點，且無法再由本套件執行或下載 Seedance 任務。其餘 4 個節點維持相容。
 
-主要技術風險是誤刪 MiniMax 共用功能，或文件與註冊表殘留 Seedance 名稱。防護方式是：先建立會失敗的註冊測試，再以最小修改移除註冊；之後用全域文字搜尋確認沒有 Seedance／ARK 殘留，並執行完整測試、`py_compile` 與 `INPUT_TYPES`／執行函式簽章比對。
+主要技術風險是誤刪 MiniMax 共用功能，或文件、註冊表與通用 bytecode 快取殘留 Seedance 名稱。防護方式是：先建立會失敗的註冊測試，再以最小修改移除註冊；之後用全域文字搜尋確認沒有 Seedance／ARK 殘留、確認 Git 不再追蹤任何 `__pycache__`，並執行完整測試、外部快取 `py_compile` 與 `INPUT_TYPES`／執行函式簽章比對。
 
 ## 測試策略
 
@@ -35,8 +36,9 @@ DMXAPI 節點選單目前註冊 7 個 Seedance 2.0 節點。使用者要求完�
 3. 執行完整 unittest，確保 MiniMax、GPT Image 2、Agnes 測試仍通過。
 4. 編譯所有剩餘 Python 模組。
 5. 執行節點宣告與函式簽章一致性檢查，預期顯示 `OK 4 nodes`。
-6. 全域搜尋 Seedance 與 `ARK_API_KEY`，並執行 `git ls-files | rg -i seedance`；允許的結果只限歷史設計／實作計畫文件，目前生效的程式、設定、維護文件與二進位快取不得殘留。
-7. 重啟 ComfyUI，確認 DMXAPI 選單只顯示 4 個保留節點。
+6. 全域搜尋 Seedance 與 `ARK_API_KEY`，並執行 `git ls-files | rg -i seedance`；允許的結果只限歷史設計／實作計畫文件，目前生效的程式、設定與維護文件不得殘留。
+7. 執行 `git ls-files __pycache__`，結果必須為空；語法檢查使用 `PYTHONPYCACHEPREFIX` 將 bytecode 寫到版本庫外。
+8. 重啟 ComfyUI，確認 DMXAPI 選單只顯示 4 個保留節點。
 
 ## 文件流程說明
 

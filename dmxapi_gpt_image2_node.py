@@ -176,9 +176,9 @@ class DMXAPI_GPT_Image2:
         會回 400 `Unknown parameter: 'image'`（實測確認）。編輯端點收的是
         multipart 檔案欄位，不是 base64 字串。
 
-        這裡也不送 response_format：gpt-image 系列固定回 b64_json，多送這個
-        欄位反而可能再吃一次 unknown_parameter，回傳格式交給 fetch_image_item
-        自行判讀（b64_json 與 url 都吃）。
+        這裡也不送 response_format：編輯路徑不需要且文件未列出這個欄位，多送
+        反而可能再吃一次 unknown_parameter。回傳格式交給 fetch_image_item
+        自行判讀，b64_json 與 URL 皆可處理。
         """
         if image.shape[0] > 1:
             logger.warning(

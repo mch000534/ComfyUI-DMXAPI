@@ -2,13 +2,12 @@
 
 > 將 DMXAPI 的圖像與影片生成服務封裝成 ComfyUI 自訂節點。
 
-這是一個純 API 客戶端，不在本機載入或執行生成模型。目前共註冊 11 個節點：2 個圖像節點與 9 個影片節點。節點會把 ComfyUI 的文字、圖片與影片輸入轉成 DMXAPI 請求，再將結果轉回 ComfyUI 可用的 `IMAGE`、`VIDEO`、影片路徑與 URL。
+這是一個純 API 客戶端，不在本機載入或執行生成模型。目前共註冊 4 個節點：2 個圖像節點與 2 個影片節點。節點會把 ComfyUI 的文字、圖片與影片輸入轉成 DMXAPI 請求，再將結果轉回 ComfyUI 可用的 `IMAGE`、`VIDEO`、影片路徑與 URL。
 
 ## ✨ 功能亮點
 
 - 支援 GPT Image 2 與 Agnes Image 2.1 Flash 文生圖、圖生圖。
 - MiniMax 僅支援 `MiniMax-H3`：整合節點完成文生影片、首幀、尾幀及首尾幀生成，另有多模態參考節點支援參考圖／影片／音訊。
-- 支援 Seedance 2.0 的文生影片、圖生影片、參考、延長及編輯流程。
 - 影片節點統一輸出 `VIDEO`、影格、末幀、檔案路徑、影片 URL 與任務 ID。
 - 內建非同步任務輪詢、下載、ComfyUI 影片預覽、重試與 API key 認證形式探測。
 - 參考圖會在上傳前轉成 JPEG 並限制尺寸，降低同步 API 的上傳與逾時風險。
@@ -129,8 +128,7 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 | 輸入 | 說明 |
 | --- | --- |
 | `resolution` / `ratio`（MiniMax H3） | 直接對應上游的列舉欄位，**不是像素尺寸換算**。`resolution` 為 `768P` / `2K`，`ratio` 為 `16:9` / `9:16` / `1:1` / `4:3` / `3:4` / `21:9`。 |
-| `width` / `height`（Seedance 2.0） | 只用來換算上游的比例與解析度檔位，不代表一定輸出這個像素尺寸。 |
-| `duration` | 影片秒數；送給上游前會四捨五入為整數。一般範圍為 4–15 秒，Seedance 影片延長至少 8 秒。 |
+| `duration` | 影片秒數；送給上游前會四捨五入為整數，範圍為 4–15 秒。 |
 | `download_video` | 決定拿到影片網址後**要不要把檔案下載回本機**，不影響上游是否生成或計費。預設開啟：下載檔案、建立 `VIDEO` 輸出與節點上的內嵌播放器。關閉時 `VIDEO` 為 `None`、`VIDEO_PATH` 為空字串，只保留 `VIDEO_URL` 與 `TASK_ID`。 |
 | `max_frames` | 決定**要不要把影片解碼成 `IMAGE_FRAMES` 影格序列**，純粹是本機記憶體開關，與畫質無關。`-1` 解碼全部；`0`（預設）完全不解碼；大於 0 時最多解碼指定幀數。 |
 | `save_dir` | 影片保存目錄；留空時使用 ComfyUI `output` 目錄。想要節點上的內嵌播放器就留空。 |
@@ -141,7 +139,7 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 
 輪詢途中的短暫網路問題不會讓整個任務前功盡棄：單次查詢失敗只會記錄警告，**連續失敗 20 次**才中止（以預設 8 秒間隔計算約可容忍 2.5 分鐘）。401 與 429 例外，會立即中止。
 
-關閉 `download_video` 適合只想取得 URL 交給其他流程的情境，但取件能力並不對稱：Seedance 可用 `DMXAPI Seedance2 下載影片` 節點事後補抓，MiniMax H3 則只能自行用 `VIDEO_URL` 下載，且必須趕在上游網址失效前。因此 H3 建議維持 `download_video=True`。
+關閉 `download_video` 適合只想取得 URL 交給其他流程的情境。MiniMax H3 沒有事後取件節點，只能自行用 `VIDEO_URL` 下載，而且必須趕在上游網址失效前，因此建議維持 `download_video=True`。
 
 所有影片節點的輸出固定為：
 
@@ -152,7 +150,7 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 | `LAST_FRAME` | 優先使用上游的 `last_frame_url`；否則只在 `max_frames != 0` 且確實解碼到影格時取最後一幀，再無則為空白影格。 |
 | `VIDEO_PATH` | 本地影片檔案路徑。 |
 | `VIDEO_URL` | DMXAPI 回傳的影片 URL。 |
-| `TASK_ID` | 非同步任務識別碼；Seedance 任務可交給其下載節點事後取件。 |
+| `TASK_ID` | MiniMax H3 非同步任務識別碼；本套件目前沒有用它事後取件的節點。 |
 
 高解析度影片請優先保持 `max_frames=0`。此時即使 `download_video=True`、影片已保存到本地，也不會解碼 `IMAGE_FRAMES` 或從影片抽取 `LAST_FRAME`；除非上游另有提供 `last_frame_url`，否則兩者使用空白影格。ComfyUI 的 `IMAGE` 是 `float32` tensor，4K 單張影格約 100 MB，15 秒 24fps 全部解碼會超過 30 GB 記憶體。
 
@@ -222,20 +220,6 @@ MiniMax H3 目前沒有公開的事後取件節點。生成節點仍會回傳 `T
 - 本機影片與音訊皆須單段 2～15 秒，且影片與音訊各自合計不超過 15 秒；本機單一影片上限 50 MB、單一音訊上限 15 MB。
 - 完整 JSON 請求體（含 base64 膨脹後的圖片、影片、音訊）上限 64 MB。大型素材建議改用公網 URL；URL 素材的時長與大小交由上游驗證。
 
-#### Seedance 2.0
-
-| 顯示名稱 | 用途 |
-| --- | --- |
-| `DMXAPI Seedance2 文生影片` | 純文字生成影片。 |
-| `DMXAPI Seedance2 首幀生影片` | 以一張首幀圖生成影片。 |
-| `DMXAPI Seedance2 首尾幀生影片` | 以首幀與末幀控制影片。 |
-| `DMXAPI Seedance2 多模態參考生影片` | 使用多張參考圖或參考影片 URL。 |
-| `DMXAPI Seedance2 影片延長` | 依來源影片 URL 延長影片。 |
-| `DMXAPI Seedance2 影片編輯` | 使用圖片及／或影片 URL 編輯既有內容。 |
-| `DMXAPI Seedance2 下載影片` | 以 `task_id` 或既有 `video_url` 下載影片。 |
-
-`DMXAPI Seedance2 下載影片` 若已提供 `video_url`，不會再發任務查詢請求；只提供 `task_id` 時才需要 API key。
-
 ## ⚙️ 設定檔說明
 
 目前沒有獨立設定檔；API key 可透過節點輸入、作業系統環境變數或專案目錄的 `.env` 提供。所有變數預設都是未設定。
@@ -252,8 +236,6 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 | `OPENAI_API_KEY` | GPT Image 2 的專屬 fallback。 | `DMXAPI_KEY` 之後 |
 | `AGNES_API_KEY` | Agnes Image 2.1 Flash 的專屬 fallback。 | `DMXAPI_KEY` 之後 |
 | `MINIMAX_API_KEY` | MiniMax 節點的專屬 fallback。 | `DMXAPI_KEY` 之後 |
-| `SEEDANCE_API_KEY` | Seedance 2.0 的專屬 fallback。 | `DMXAPI_KEY` 之後 |
-| `ARK_API_KEY` | Seedance 2.0 的第二專屬 fallback。 | `SEEDANCE_API_KEY` 之後 |
 
 解析順序是：節點輸入 `api_key` → `DMXAPI_KEY` → 該模組專屬環境變數。HTTP 請求會依端點先嘗試 Bearer 或裸 key，收到 401 時自動嘗試另一種形式；401 與 429 不會進入一般重試。
 
@@ -265,7 +247,7 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 | --- | --- | --- | --- |
 | `POST` | `/v1/images/generations` | GPT Image 2 純文生圖、Agnes 文生圖／圖生圖 | 同步回傳圖像資料。 |
 | `POST` | `/v1/images/edits` | GPT Image 2 圖生圖 | multipart/form-data，上傳參考圖檔案。 |
-| `POST` | `/v1/responses` | MiniMax、Seedance | 提交非同步任務、輪詢狀態及取得結果。 |
+| `POST` | `/v1/responses` | MiniMax H3 | 提交非同步任務、輪詢狀態及取得結果。 |
 
 官方模型文件：
 
@@ -286,7 +268,6 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 | `dmxapi_gpt_image2_node.py` | GPT Image 2 節點。 |
 | `dmxapi_agnes_image.py` | Agnes Image 2.1 Flash 節點。 |
 | `dmxapi_minimax_h3_nodes.py` | MiniMax H3 的兩個節點：首尾幀整合節點與多模態參考生影片節點。 |
-| `dmxapi_seedance2.py` | Seedance 2.0 與下載節點。 |
 | `requirements.txt` | Python 依賴清單。 |
 
 新增節點模組時，除了定義該模組的 `NODE_CLASS_MAPPINGS` 與 `NODE_DISPLAY_NAME_MAPPINGS`，也要把模組加入 `__init__.py` 的 `_MODULES`，否則 ComfyUI 不會載入它。
@@ -302,7 +283,7 @@ cd /path/to/ComfyUI/custom_nodes/ComfyUI-DMXAPI
 PYTHONDONTWRITEBYTECODE=1 /path/to/ComfyUI/.venv/bin/python -c "import importlib.util,sys; p='.'; s=importlib.util.spec_from_file_location('ComfyUI_DMXAPI',p+'/__init__.py',submodule_search_locations=[p]); m=importlib.util.module_from_spec(s); sys.modules['ComfyUI_DMXAPI']=m; s.loader.exec_module(m); print(len(m.NODE_CLASS_MAPPINGS), sorted(m.NODE_CLASS_MAPPINGS))"
 ```
 
-預期會看到 11 個節點。
+預期會看到 4 個節點。
 
 ### 收到 401 或認證失敗
 
@@ -361,7 +342,7 @@ DMXAPI 的 GPT Image 2 `/v1/images/generations` 是純文生圖端點；帶參�
 3. 使用 ComfyUI 的 Python 環境進行語法檢查：
 
    ```bash
-   PYTHONDONTWRITEBYTECODE=1 /path/to/ComfyUI/.venv/bin/python -m py_compile __init__.py dmxapi_common.py dmxapi_agnes_image.py dmxapi_gpt_image2_node.py dmxapi_minimax_h3_nodes.py dmxapi_seedance2.py
+   PYTHONPYCACHEPREFIX=/private/tmp/dmxapi-pycache /path/to/ComfyUI/.venv/bin/python -m py_compile __init__.py dmxapi_common.py dmxapi_agnes_image.py dmxapi_gpt_image2_node.py dmxapi_minimax_h3_nodes.py
    ```
 
 4. 重啟 ComfyUI，在畫布上以真實 API 請求實測，並確認新模組已加入 `__init__.py` 的 `_MODULES`。

@@ -9,7 +9,6 @@ DMXAPI ComfyUI 節點共用工具
 
 import io
 import os
-import math
 import re
 import time
 import base64
@@ -105,9 +104,7 @@ IMAGES_EDITS_URL = BASE_HOST + "/v1/images/edits"
 RESPONSES_URL = BASE_HOST + "/v1/responses"
 
 
-# ==================== 選項清單 ====================
-# 各家上游的解析度字彙不同（MiniMax H3 用 768P/2K，Seedance 用 720p/4k），
-# 不能混用，因此按家族分開定義，但排列一律由低到高。
+# ==================== MiniMax H3 選項 ====================
 
 # MiniMax H3 的 ratio 與 resolution 都是上游的列舉，節點直接開下拉讓使用者選，
 # 不做像素換算（H3 不接受任意寬高，見 CLAUDE.md）。
@@ -119,51 +116,7 @@ H3_RESOLUTIONS = ["768P", "2K"]
 # adaptive 且不接受其他值，兩者都不該用這份清單。
 H3_REFERENCE_RATIOS = ["adaptive"] + MINIMAX_RATIOS
 
-# 解析度檔位：{上游名稱: 對應的短邊像素}。Seedance 節點層收的是 width / height，
-# 由 resolution_from_size() 以短邊挑最接近的檔位換算成這裡的名稱。
-SEEDANCE_RESOLUTION_TIERS = {"480p": 480, "720p": 720, "1080p": 1080, "4k": 2160}
-
-SEEDANCE_RATIOS = ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
-
-
-# ==================== 尺寸與長度換算 ====================
-# 節點的輸入介面對齊 ComfyUI 官方範本（width / height / duration），但這些
-# API 都只收固定的 ratio 字串與解析度檔位，不吃任意像素尺寸，因此在送出前
-# 由下面三個函式換算。換算結果一律寫進 log，方便對照上游實際收到什麼。
-
-def _ratio_value(name):
-    left, right = name.split(":")
-    return float(left) / float(right)
-
-
-def ratio_from_size(width, height, options):
-    """width / height → 最接近的長寬比字串。
-
-    以對數距離比較，避免 21:9 這種極端比例因為數值大而被系統性偏袒。
-    options 內的非比例值（Seedance 的 "adaptive"）只在寬高留空（0）時選用，
-    代表「跟隨參考圖」。
-    """
-    numeric = [name for name in options if ":" in name]
-
-    if not width or not height:
-        return "adaptive" if "adaptive" in options else numeric[0]
-
-    target = float(width) / float(height)
-    return min(numeric, key=lambda name: abs(math.log(_ratio_value(name) / target)))
-
-
-def resolution_from_size(width, height, tiers, default=None):
-    """width / height → 最接近的解析度檔位名稱（比較短邊，取線性最近）。
-
-    寬高留空時回傳 default，供 Seedance 的 adaptive 模式使用。
-    """
-    sides = [side for side in (width, height) if side and side > 0]
-    if not sides:
-        return default or next(iter(tiers))
-
-    short = min(sides)
-    return min(tiers, key=lambda name: abs(tiers[name] - short))
-
+# ==================== 長度換算 ====================
 
 def duration_seconds(duration, minimum=4, maximum=15):
     """範本的 duration 是 FLOAT 秒數，但這些 API 只收整數秒，四捨五入後夾在合法區間。"""
@@ -371,8 +324,7 @@ def poll_task(payload, parse, token, label="任務", poll_interval=8, max_wait=9
               request_timeout=60, max_consecutive_errors=20, url=RESPONSES_URL):
     """統一的輪詢迴圈。
 
-    H3 與 Seedance 的狀態欄位和回應結構不同（H3 用 succeeded，
-    Seedance 還多包一層 JSON 字串），因此把解析交給 parse 回呼，這裡只負責
+    上游狀態與回應結構的解析交給 parse 回呼，這裡只負責
     計時、間隔、容錯與錯誤訊息格式。
 
     parse(data) 需回傳 (state, value)：
@@ -878,25 +830,6 @@ class DMXAPIVideoNodeBase:
     CATEGORY = "DMXAPI/Video"
 
     @staticmethod
-    def size_inputs(width=1344, height=768):
-        """對齊官方範本的 width / height 輸入。
-
-        這些 API 不吃任意像素尺寸，寬高只用來換算成上游要的 ratio 與解析度檔位
-        （見 ratio_from_size / resolution_from_size），所以接 GetImageSize 或
-        ResolutionSelector 都可以，實際輸出仍是上游檔位的尺寸。
-        """
-        return {
-            "width": ("INT", {
-                "default": width, "min": 0, "max": 8192, "step": 16,
-                "tooltip": "只用來換算長寬比與解析度檔位，不是實際輸出像素；0 = 跟隨參考圖（僅 Seedance）",
-            }),
-            "height": ("INT", {
-                "default": height, "min": 0, "max": 8192, "step": 16,
-                "tooltip": "只用來換算長寬比與解析度檔位，不是實際輸出像素；0 = 跟隨參考圖（僅 Seedance）",
-            }),
-        }
-
-    @staticmethod
     def duration_input(default=5.0, minimum=4.0, maximum=15.0):
         """對齊範本的 FLOAT 秒數；送出前由 duration_seconds() 四捨五入成整數秒。"""
         return {
@@ -940,7 +873,7 @@ class DMXAPIVideoNodeBase:
             # VIDEO 物件需要本地檔案，沒下載就只能給空的，也無法內嵌播放
             logger.warning(
                 "[DMXAPI] download_video=False，VIDEO 輸出為空。"
-                "要接 SaveVideo 請打開 download_video，或事後用下載節點取件。"
+                "要接 SaveVideo 請打開 download_video；否則請在 URL 失效前從 VIDEO_URL 自行下載。"
             )
             return {
                 "ui": {"text": [video_url]},

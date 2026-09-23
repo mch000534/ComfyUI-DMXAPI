@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 專案性質
 
-ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI 相容的第三方模型聚合閘道）的圖像／影片生成服務，共 11 個節點：2 個圖像節點與 9 個影片節點。
+ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI 相容的第三方模型聚合閘道）的圖像／影片生成服務，共 4 個節點：2 個圖像節點與 2 個影片節點。
 
 這是**純 API 客戶端**，不做任何本地推論。`torch` / `numpy` / `Pillow` 只用於 ComfyUI tensor 與 base64 之間的轉換，`opencv-python` / `imageio` 只用於影片抽幀。修改時不要引入本地模型載入邏輯。
 
@@ -23,13 +23,13 @@ VENV=/Users/barry/Documents/ComfyUI/.venv/bin/python
 $VENV -m pip install -r requirements.txt
 
 # 語法檢查
-$VENV -m py_compile *.py
+PYTHONPYCACHEPREFIX=/private/tmp/dmxapi-pycache $VENV -m py_compile __init__.py dmxapi_common.py dmxapi_agnes_image.py dmxapi_gpt_image2_node.py dmxapi_minimax_h3_nodes.py
 
 # 離線回歸測試
 PYTHONDONTWRITEBYTECODE=1 $VENV -m unittest discover -s tests -v
 
 # 冒煙測試：確認節點註冊（目錄名含連字號，無法直接 import，須用 spec 載入）
-$VENV -c "
+PYTHONDONTWRITEBYTECODE=1 $VENV -c "
 import importlib.util, sys
 p = '/Users/barry/Documents/ComfyUI/custom_nodes/ComfyUI-DMXAPI'
 spec = importlib.util.spec_from_file_location('ComfyUI_DMXAPI', p + '/__init__.py', submodule_search_locations=[p])
@@ -44,7 +44,7 @@ print(len(m.NODE_CLASS_MAPPINGS), list(m.NODE_CLASS_MAPPINGS))"
 ComfyUI 最常見的失敗是 `INPUT_TYPES` 的欄位與 `FUNCTION` 指向的方法簽章對不上，載入時不會報錯、執行才拋 TypeError。改過任何 `INPUT_TYPES` 或 `generate()` 參數後，跑這段自動比對：
 
 ```bash
-$VENV -c "
+PYTHONDONTWRITEBYTECODE=1 $VENV -c "
 import importlib.util, sys, inspect
 p = '/Users/barry/Documents/ComfyUI/custom_nodes/ComfyUI-DMXAPI'
 spec = importlib.util.spec_from_file_location('ComfyUI_DMXAPI', p + '/__init__.py', submodule_search_locations=[p])
@@ -57,7 +57,7 @@ for name, cls in m.NODE_CLASS_MAPPINGS.items():
     if (need - declared) or (declared - params):
         print('X', name, sorted(need - declared), sorted(declared - params))
     assert len(cls.RETURN_TYPES) == len(cls.RETURN_NAMES), name
-print('OK')"
+print(f'OK {len(m.NODE_CLASS_MAPPINGS)} nodes')"
 ```
 
 ## 架構
@@ -70,7 +70,6 @@ print('OK')"
 | [dmxapi_gpt_image2_node.py](dmxapi_gpt_image2_node.py) | GPT Image 2 圖像生成（1 個節點） |
 | [dmxapi_agnes_image.py](dmxapi_agnes_image.py) | Agnes Image 2.1 Flash 圖像生成（1 個節點） |
 | [dmxapi_minimax_h3_nodes.py](dmxapi_minimax_h3_nodes.py) | MiniMax H3 影片（2 個節點：首尾幀生成與多模態參考生影片） |
-| [dmxapi_seedance2.py](dmxapi_seedance2.py) | 豆包 Seedance 2.0 影片（7 個節點） |
 
 **節點模組不應自行組 headers、自行寫重試迴圈、自行做 base64 編碼或自行輪詢**——這些一律走 `dmxapi_common`。新增節點時先看共用模組有沒有現成的東西。
 
@@ -82,7 +81,7 @@ print('OK')"
 | --- | --- | --- |
 | `POST /v1/images/generations` | gpt_image2（純文生圖）、agnes | 同步，OpenAI 相容 JSON，直接回傳 `data[].b64_json` 或 `url` |
 | `POST /v1/images/edits` | gpt_image2（帶 `image` 時） | 同步，**multipart/form-data**，回傳格式同上 |
-| `POST /v1/responses` | minimax、seedance | 非同步，提交 → 輪詢 |
+| `POST /v1/responses` | minimax | 非同步，提交 → 輪詢 |
 
 **gpt-image-2 的參考圖不能塞進 generations 的 payload**：上游會回 400 `Unknown parameter: 'image'`（實測確認）。（Agnes 是另一回事——它的參考圖走同一個端點的 `extra_body.image`，見下節。）`generations` 是純文生圖端點，圖生圖一律走 `edits`，而且圖是 multipart 的**檔案欄位**，不是 base64 字串——所以 `_submit_edit()` 用 `common.tensor_to_image_bytes()` 取原始 bytes 走 `common.post_multipart()`，不用 `tensor_to_data_url()`。`edits` 也不送 `response_format`，避免再吃一次 `unknown_parameter`；回傳由 `fetch_image_item()` 判讀（`b64_json` 與 `url` 都吃）。
 
@@ -122,22 +121,19 @@ print('OK')"
 
 `post_json()` 與 `post_multipart()` 共用同一個 `_post()` 迴圈，因此重試策略與認證探測完全一致。差別只在標頭：帶 `files` 時 `build_headers()` **不設 `Content-Type`**，交給 requests 產生含 boundary 的那一行。multipart 的 `files` 值一律傳 bytes，不要傳開啟的檔案物件——重試時串流已經讀完了。
 
-`/v1/responses` 是**單一端點多工**：MiniMax H3 與 Seedance 的提交和輪詢都 POST 到同一個 URL，靠 payload 裡的 `model` 欄位區分動作。目前查詢動作只有 `MiniMax-H3-get` 與 `seedance-2-0-get`。理解這點是讀懂本專案的關鍵——「查詢狀態」不是 GET 某個 task URL，而是換個 `model` 名字再 POST 一次。
+`/v1/responses` 同時負責 MiniMax H3 的提交與輪詢，靠 payload 裡的 `model` 欄位區分動作：提交使用 `MiniMax-H3`，查詢使用 `MiniMax-H3-get`。「查詢狀態」不是 GET 某個 task URL，而是換個 `model` 名字再 POST 一次。
 
-### 兩套非同步協定
+### MiniMax H3 非同步協定
 
-輪詢的**迴圈骨架已統一**在 `common.poll_task()`（計時、間隔、容錯、錯誤訊息格式），但各家的狀態欄位與字串是上游決定的，無法統一，因此透過 `parse` 回呼分別處理。`parse(data)` 回傳 `(state, value)`，`state` 為 `"done"` / `"pending"` / `"failed"`。
+輪詢的迴圈在 `common.poll_task()`（計時、間隔、容錯、錯誤訊息格式），透過 `parse` 回呼處理 MiniMax 回應。`parse(data)` 回傳 `(state, value)`，`state` 為 `"done"` / `"pending"` / `"failed"`。
 
-1. **MiniMax H3**（`_parse_h3`）：提交 → `task_id` → `model=MiniMax-H3-get` 輪詢 → `task.status == "succeeded"` → 影片在 `task.content.url`。
-2. **Seedance 2.0**（`_parse_seedance`）：提交回傳的 key 是 **`id`** 而非 `task_id`；輪詢結果**多包一層 JSON 字串**——真正的狀態在 `data["output"][0]["content"][0]["text"]`，必須再 `json.loads()` 一次。解析失敗視為「仍在排隊」而繼續輪詢，不是錯誤。
-
-兩套協定的成功狀態目前都使用小寫 `succeeded`，但回應結構不同，不要因此合併解析器。
+流程為：提交 → `task_id` → `model=MiniMax-H3-get` 輪詢 → `task.status == "succeeded"` → 從 `task.content.url` 取得影片。
 
 ### 與官方範本的介面對齊
 
 整合的 `DMXAPI_MiniMax_Video` 直接對齊 ComfyUI 官方 H3 範本命名，可替換範本裡的本地推論子圖：`first_frame` / `last_frame` / `prompt` / `duration` / `noise_seed`。尺寸欄位是例外——H3 只收列舉，因此改成 `resolution` / `ratio` 兩個下拉（見下節），不再提供 `width` / `height`。範本的 `unet_name`、`clip_name`、`vae_name`、`audio_vae` 是本地模型載入用的，API 版換成 `model` 與 `api_key`。
 
-八個影片生成節點在適用時共用 `prompt` / `duration` / `noise_seed` 命名（Seedance 仍收 `width` / `height`，H3 收 `resolution` / `ratio`）；以影格控制生成的節點使用 `first_frame` / `last_frame`。Seedance 的多模態參考、影片延長與影片編輯另有各自的圖片及影片 URL 欄位，不能視為與 H3 完全相同的介面。`DMXAPI_Seedance2_DownloadVideo` 是第九個影片節點，使用獨立的下載介面，不接收生成節點的 prompt、尺寸、時長或 seed 欄位。**新增生成節點時應沿用適用的共通命名，但專用輸入仍須清楚區分。**
+兩個影片生成節點都使用 `prompt` / `resolution` / `ratio` / `duration` / `noise_seed` 命名。首尾幀節點另有 `first_frame` / `last_frame`；多模態參考節點則有參考圖、影片與音訊欄位。**新增生成節點時應沿用適用的共通命名，但專用輸入仍須清楚區分。**
 
 MiniMax 有兩個節點：`DMXAPI_MiniMax_Video`（首尾幀）與 `DMXAPI_MiniMax_Reference2V`（多模態參考，見下節），兩者的 `model` widget 都只提供 `MiniMax-H3`。影格輸入有四種合法組合，與上游一致：不接影格為文生影片、只接 `first_frame`（首幀）、**只接 `last_frame`（尾幀）**、或兩者都接（首尾幀）。只接 `last_frame` 曾被節點擋下，但上游本來就支援，已解除限制——不要再加回這個檢查。兩個影格都沒接（純文生）時才強制 `prompt` 非空。H3 payload 的 `model` 固定為 `MiniMax-H3`，圖片 role 沿用 `first_frame` / `last_frame`，不要讓舊 workflow 傳入的 model 值改變實際 payload。
 
@@ -193,7 +189,7 @@ MiniMax 有兩個節點：`DMXAPI_MiniMax_Video`（首尾幀）與 `DMXAPI_MiniM
 - 沒有任何參考素材時直接報錯並指回 `DMXAPI_MiniMax_Video`——不帶素材時它就只是文生影片，
   而且 `ratio=adaptive` 在那個情境是非法值。
 
-### 尺寸：H3 直接收列舉，Seedance 收 width/height 再換算
+### 尺寸：H3 直接收列舉
 
 **MiniMax H3 不做像素換算。** 上游只收兩個列舉欄位（[文生視頻](https://doc.dmxapi.cn/MiniMax-H3-text-to-video.html)、[圖生視頻](https://doc.dmxapi.cn/MiniMax-H3-image-to-video.html)）：
 
@@ -203,27 +199,18 @@ MiniMax 有兩個節點：`DMXAPI_MiniMax_Video`（首尾幀）與 `DMXAPI_MiniM
   傳其他值不報錯但會被忽略）。因此 `build_h3_payload()` 只在 `input` 裡沒有任何
   `image_url` 時才送 `ratio`，帶參考圖時直接省略並記一筆 log。
 
-節點因此開兩個下拉，**不收 `width` / `height`**。曾經有一版是收寬高再用
-`ratio_from_size()` / `resolution_from_size()` 換算，結果是常見的 `1280x720`、`1920x1080`、
+節點因此開兩個下拉，**不收 `width` / `height`**。曾經有一版是收寬高再自動換算，
+結果是常見的 `1280x720`、`1920x1080`、
 `1344x768` 全都換算成同一組 `16:9` + `768P`（2K 需要短邊 ≥ 1105），使用者改寬高卻拿到
 一模一樣的 1344x768 影片。介面收「像素尺寸」卻無法決定像素尺寸，是誤導——不要改回去。
 
-**Seedance 仍收 `width` / `height`**（它的檔位較密，且支援 `adaptive`），送出前由 `common` 換算並把結果寫進 log：
-
-- `ratio_from_size(width, height, options)`：以**對數距離**挑最接近的比例，避免 `21:9` 這種極端值因數值大而被系統性偏袒。寬高為 `0` 且清單裡有 `adaptive` 時回傳 `adaptive`。
-- `resolution_from_size(width, height, tiers, default)`：比**短邊**，取線性最近的檔位。
-
-| 常數 | 內容 |
-| --- | --- |
-| `SEEDANCE_RESOLUTION_TIERS` | `480p`=480、`720p`=720、`1080p`=1080、`4k`=2160 |
-
-`H3_RESOLUTION_TIERS` 與 `MiniMaxVideoBase.resolve_size()` 已隨上述改動移除。
+舊的像素尺寸換算常數與 `MiniMaxVideoBase.resolve_size()` 已移除；H3 尺寸只使用上述列舉，不要重新加入換算層。
 
 `duration` 也對齊範本改成 **FLOAT 秒數**，送出前由 `duration_seconds()` 四捨五入成整數秒並夾在合法區間（超界會記 warning）。
 
 ### 影片節點的統一契約
 
-所有 9 個影片節點都繼承 `common.DMXAPIVideoNodeBase`，並共享相同的輸出簽章，因此下游輸出接線可以互換：
+兩個影片節點都繼承 `common.DMXAPIVideoNodeBase`，並共享相同的輸出簽章，因此下游輸出接線可以互換：
 
 ```python
 RETURN_NAMES = ("VIDEO", "IMAGE_FRAMES", "LAST_FRAME", "VIDEO_PATH", "VIDEO_URL", "TASK_ID")
@@ -231,26 +218,20 @@ RETURN_NAMES = ("VIDEO", "IMAGE_FRAMES", "LAST_FRAME", "VIDEO_PATH", "VIDEO_URL"
 
 第一槽的 `VIDEO` 與官方範本一致，可直接接內建 `SaveVideo` / `PreviewVideo`。它由 `common.to_video_output(path)` 以 `comfy_api` 的 `VideoFromFile` 包本地檔案產生；`comfy_api` 只有在 ComfyUI 進程內才 import 得到（冒煙測試是裸 Python 載入本套件），所以那裡是**延遲 import 且失敗回傳 None**，不要改成模組層級 import。
 
-八個生成節點的共用輸入由 `common_inputs()` 產生：`download_video` / `max_frames` / `save_dir` / `poll_interval` / `max_wait`；長度由 `duration_input()` 產生，尺寸則分兩路：Seedance 走 `size_inputs()`（width / height），H3 自行宣告 `resolution` / `ratio` 下拉。生成節點收尾呼叫 `self.finish(...)`，由它決定是否落地成檔案。Seedance 下載節點自行宣告獨立輸入，但維持相同輸出簽章。
+兩個生成節點的共用輸入由 `common_inputs()` 產生：`download_video` / `max_frames` / `save_dir` / `poll_interval` / `max_wait`；長度由 `duration_input()` 產生，H3 尺寸由節點自行宣告 `resolution` / `ratio` 下拉。生成節點收尾呼叫 `self.finish(...)`，由它決定是否落地成檔案。
 
 - `download_video=False` → 不下載影片，只回 URL 與 task_id；`VIDEO` 是 `None`，`IMAGE_FRAMES` 使用空白影格。若上游有 `last_frame_url`，`LAST_FRAME` 仍可使用該圖片，否則也為空白影格。
 - `download_video=True` → 下載影片並建立 `VIDEO` 與預覽；只有 `max_frames != 0` 才會解碼 `IMAGE_FRAMES`。
 
-`VIDEO` 需要本地檔案，所以 MiniMax H3 與 Seedance 生成節點的 `download_video` **一律預設 True**。相對地 `max_frames` 預設為 `0`——有 VIDEO 與內嵌預覽就不必把影格拉進記憶體，要後製再自行調高。
+`VIDEO` 需要本地檔案，所以 MiniMax H3 生成節點的 `download_video` **預設 True**。相對地 `max_frames` 預設為 `0`——有 VIDEO 與內嵌預覽就不必把影格拉進記憶體，要後製再自行調高。
 
 `LAST_FRAME` 的取得優先序：上游給的 `last_frame_url` > `max_frames != 0` 時已解碼影格的最後一幀 > 空白影格。`download_video=True` 只保證下載檔案；預設 `max_frames=0` 不會為了取得末幀而額外解碼。
 
-### 下載節點
-
-只有 Seedance 提供公開的事後取件節點 `DMXAPI_Seedance2_DownloadVideo`，可用 `task_id` 或 `video_url` 下載影片。用途是 Seedance 生成當下關掉了 `download_video`、ComfyUI 中途重啟，或想跨工作流取回舊任務；它是 `OUTPUT_NODE = True`。
-
-只填 `video_url` 時不會發任何任務查詢請求，也不需要 api_key。
-
-MiniMax H3 目前沒有公開的事後取件節點。`DMXAPI_MiniMax_Video` 仍輸出 `TASK_ID`，但該 ID 無法透過另一個 MiniMax ComfyUI 節點事後取回影片；需要本地檔案時應在生成節點保持 `download_video=True`。
+MiniMax H3 目前沒有公開的事後取件節點。兩個生成節點仍輸出 `TASK_ID`，但該 ID 無法透過另一個本套件節點事後取回影片；需要本地檔案時應在生成節點保持 `download_video=True`。
 
 ### 內嵌影片預覽
 
-`finish()` 與 Seedance 下載節點都會回傳 `{"ui": ..., "result": ...}`，`ui` 由 `common.build_video_preview(path)` 產生，格式與 ComfyUI 內建 `SaveVideo` 一致：
+`finish()` 會回傳 `{"ui": ..., "result": ...}`，`ui` 由 `common.build_video_preview(path)` 產生，格式與 ComfyUI 內建 `SaveVideo` 一致：
 
 ```python
 {"images": [{"filename": ..., "subfolder": ..., "type": "output"}], "animated": (True,)}
@@ -306,7 +287,6 @@ Key 的解析優先序：**節點輸入 > `DMXAPI_KEY` > 模組專屬環境變�
 | gpt_image2 | `OPENAI_API_KEY` |
 | agnes | `AGNES_API_KEY` |
 | minimax | `MINIMAX_API_KEY` |
-| seedance | `SEEDANCE_API_KEY`、`ARK_API_KEY` |
 
 ### 錯誤處理策略
 

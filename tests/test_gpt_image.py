@@ -337,6 +337,7 @@ class GPTImageTests(unittest.TestCase):
             patch.object(GPT_IMAGE, "post_multipart", return_value=response) as post_multipart,
             fetch_patch,
             tensor_patch,
+            self.assertLogs("DMXAPI", level="WARNING") as logs,
         ):
             result = self.node.generate_image(
                 prompt="edit prompt",
@@ -349,6 +350,7 @@ class GPTImageTests(unittest.TestCase):
             )
 
         self.assertEqual(result, ("image-tensor",))
+        self.assertEqual(len(logs.records), 1)
         encode.assert_called_once_with(image, fmt="JPEG", quality=95, max_side=2048)
         post_multipart.assert_called_once()
         url, fields, files, token = post_multipart.call_args.args
@@ -369,7 +371,7 @@ class GPTImageTests(unittest.TestCase):
         self.assertEqual(post_multipart.call_args.kwargs["timeout"], 120)
         self.assertIs(post_multipart.call_args.kwargs["session"], session)
 
-    def test_timeout_guidance_recommends_full_flare_family(self):
+    def test_timeout_guidance_recommends_only_evidence_backed_flare_base(self):
         with (
             patch.object(GPT_IMAGE, "resolve_api_key", return_value="token"),
             patch.object(
@@ -390,8 +392,8 @@ class GPTImageTests(unittest.TestCase):
 
         message = str(caught.exception)
         self.assertIn("gpt-image-2.5-flare", message)
-        self.assertIn("gpt-image-2.5-flare-cdx", message)
-        self.assertIn("gpt-image-2.5-flare-ssvip", message)
+        self.assertNotIn("gpt-image-2.5-flare-cdx", message)
+        self.assertNotIn("gpt-image-2.5-flare-ssvip", message)
 
 
 if __name__ == "__main__":

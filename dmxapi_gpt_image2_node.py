@@ -273,8 +273,7 @@ class DMXAPI_GPT_Image2:
             raise RuntimeError(
                 str(e) + "\n[DMXAPI] 圖像節點可調的加速順序："
                 "(1) quality 改 medium 或 low；"
-                "(2) model 改用 gpt-image-2.5-flare、gpt-image-2.5-flare-cdx "
-                "或 gpt-image-2.5-flare-ssvip；"
+                "(2) model 改用速度優先的 gpt-image-2.5-flare；"
                 "(3) size 指定 1024x1024 而非 auto；"
                 "(4) 縮短 prompt——多視角、多分鏈的描述會顯著拉長生成時間。"
             ) from e

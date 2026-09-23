@@ -47,6 +47,7 @@ coverage.xml
 # Local tests and planning documents
 tests/
 docs/
+.worktrees/
 
 # ComfyUI generated files and local media
 output/

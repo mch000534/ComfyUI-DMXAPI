@@ -26,7 +26,7 @@ PYTHONDONTWRITEBYTECODE=1 $VENV -m unittest tests.test_minimax_simplification -v
 | 檔案 | 職責 |
 | --- | --- |
 | `dmxapi_common.py` | 端點、key、HTTP 重試、輪詢、tensor／影片、`DMXAPIVideoNodeBase` |
-| `dmxapi_gpt_image2_node.py` | GPT Image 2（1） |
+| `dmxapi_gpt_image2_node.py` | GPT Image 2／2.5（1） |
 | `dmxapi_agnes_image.py` | Agnes 2.1 Flash（1） |
 | `dmxapi_minimax_h3_nodes.py` | MiniMax H3（2）：首尾幀生成、多模態參考生影片 |
 | `__init__.py` | `_MODULES` 合併映射；重複 ID 直接 raise |
@@ -36,17 +36,19 @@ PYTHONDONTWRITEBYTECODE=1 $VENV -m unittest tests.test_minimax_simplification -v
 
 共 4 個已註冊節點（測試會鎖這個數字）。
 
+GPT 節點的可見名稱是 `DMXAPI GPT Image`；內部 ID／class `DMXAPI_GPT_Image2` 與模組檔名維持不變，避免破壞既有 workflow。專屬 key 後援仍為 `OPENAI_API_KEY`。
+
 ## 端點（易混）
 
 | 端點 | 誰用 | 注意 |
 | --- | --- | --- |
-| `POST /v1/images/generations` | gpt 文生圖、**Agnes 全文生／圖生** | 同步 JSON |
-| `POST /v1/images/edits` | gpt **有參考圖時** | 同步 **multipart**；圖是檔案 bytes，不是 base64 |
+| `POST /v1/images/generations` | GPT Image 2／2.5 文生圖、**Agnes 全文生／圖生** | 同步 JSON |
+| `POST /v1/images/edits` | GPT Image 2／2.5 **有參考圖時** | 同步 **multipart**；圖是檔案 bytes，不是 base64 |
 | `POST /v1/responses` | MiniMax 提交**與**輪詢 | 靠 payload `model` 區分動作；查詢不是 GET |
 
 **不要把 gpt 與 Agnes 協定互套：**
 
-- gpt 參考圖 → `edits` multipart（generations 塞 `image` 會 400）。
+- GPT Image 2／2.5 參考圖 → `edits` multipart（generations 塞 `image` 會 400）。
 - Agnes 參考圖 → 同一 generations，但 `image`／`response_format` 必須在 **`extra_body`**；data URI 陣列，無 edits。
 - Agnes `size` = `1K`/`2K`/`3K`/`4K` + 另欄 `ratio`；**不是** `1024x768`。Agnes 2.0 參數不相容 → 要支援就開新節點。
 - Agnes 逾時依 size：1K/2K 180s、3K/4K 300s（非 `DEFAULT_TIMEOUT`）。
@@ -69,8 +71,11 @@ MiniMax 有 `DMXAPI_MiniMax_Video` 與 `DMXAPI_MiniMax_Reference2V`；payload `m
 
 ## 圖像／HTTP 雷區
 
-- gpt `quality` 下拉**必須留在 `INPUT_TYPES` 最後**（workflow `widgets_values` 依位置；插入中間會錯位）。`auto` 時不送該欄位。
-- `gpt-image-2-03` 僅 `n=1`（`SINGLE_IMAGE_ONLY_MODELS`）。
+- GPT Image 2.5 有 `gpt-image-2.5-sunburst`（新預設、品質優先）、`gpt-image-2.5-sunburst-cdx`、`gpt-image-2.5-sunburst-ssvip`、`gpt-image-2.5-flare`、`gpt-image-2.5-flare-cdx`、`gpt-image-2.5-flare-ssvip`；flare 家族速度優先。官方頁面列出兩個基礎 ID 並說明 CDX 限制，`-ssvip` 可用性是使用者實測確認，勿聲稱六個完整 ID 都由文件逐項列出。
+- 舊版 `gpt-image-2-03` / `gpt-image-2` / `gpt-image-2-ssvip` 仍保留。`gpt-image-2-03` 僅 `n=1`；兩個 2.5 CDX 模型最多 `n=3`；其餘由節點限制為最多 4。特殊上限走 `MODEL_BATCH_LIMITS`，`SINGLE_IMAGE_ONLY_MODELS` 僅保留相容性。
+- GPT `quality` 為 `auto` / `low` / `medium` / `high` / `xhigh` / `max`；`xhigh` / `max` 僅限 2.5，舊版要在解析 key 前本地拒絕。下拉**必須留在 `INPUT_TYPES` 最後**（workflow `widgets_values` 依位置；插入中間會錯位）。`auto` 時不送該欄位。
+- 純文生圖：2.5 依文件／預設省略 `response_format`，舊版保留 `b64_json`。圖片編輯也不送該欄位，`fetch_image_item()` 必須同時支援 `b64_json` 與 URL。
+- 同步圖像逾時先降 `quality`，再改用完整 flare 家族：`gpt-image-2.5-flare` / `gpt-image-2.5-flare-cdx` / `gpt-image-2.5-flare-ssvip`，不要只建議舊版 `gpt-image-2-ssvip`。
 - 同步閘道約 **60s** 斷線（無 HTTP status）。送出後斷線最多再試 1 次（`POST_SEND_MAX_ATTEMPTS=2`）；改重試前先想**重複計費**。無非同步 gpt 端點可繞。
 - 401：auth 形式 fallback（`/v1/responses` 先裸 key，其餘先 Bearer），勿寫死。429：**不重試**。
 - multipart：`build_headers` 不設 Content-Type；`files` 傳 **bytes**（重試會重讀）。

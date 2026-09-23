@@ -67,7 +67,7 @@ print(f'OK {len(m.NODE_CLASS_MAPPINGS)} nodes')"
 | 檔案 | 內容 |
 | --- | --- |
 | [dmxapi_common.py](dmxapi_common.py) | **所有共用邏輯**：端點常數、Key 解析、HTTP 重試、輪詢迴圈、tensor 編解碼、影片下載與抽幀、影片節點基底類別 |
-| [dmxapi_gpt_image2_node.py](dmxapi_gpt_image2_node.py) | GPT Image 2 圖像生成（1 個節點） |
+| [dmxapi_gpt_image2_node.py](dmxapi_gpt_image2_node.py) | GPT Image 2／2.5 圖像生成（1 個節點） |
 | [dmxapi_agnes_image.py](dmxapi_agnes_image.py) | Agnes Image 2.1 Flash 圖像生成（1 個節點） |
 | [dmxapi_minimax_h3_nodes.py](dmxapi_minimax_h3_nodes.py) | MiniMax H3 影片（2 個節點：首尾幀生成與多模態參考生影片） |
 
@@ -75,15 +75,17 @@ print(f'OK {len(m.NODE_CLASS_MAPPINGS)} nodes')"
 
 套件的註冊檔用 `_MODULES` 清單合併各模組的映射，並會在節點 ID 重複註冊時直接拋錯。新增節點模組時**必須**一併加進該清單，否則不會載入。
 
+GPT 節點的畫布顯示名稱是 `DMXAPI GPT Image`；模組檔名 `dmxapi_gpt_image2_node.py`、節點 ID 與 class `DMXAPI_GPT_Image2` 都是相容性介面，不因加入 2.5 而改名。模組專屬 key 後援仍是 `OPENAI_API_KEY`。全套仍只有 4 個註冊節點。
+
 ### 三個 API 端點
 
 | 端點 | 使用者 | 型態 |
 | --- | --- | --- |
-| `POST /v1/images/generations` | gpt_image2（純文生圖）、agnes | 同步，OpenAI 相容 JSON，直接回傳 `data[].b64_json` 或 `url` |
-| `POST /v1/images/edits` | gpt_image2（帶 `image` 時） | 同步，**multipart/form-data**，回傳格式同上 |
+| `POST /v1/images/generations` | GPT Image 2／2.5（`gpt_image2` 純文生圖）、agnes | 同步，OpenAI 相容 JSON，直接回傳 `data[].b64_json` 或 `url` |
+| `POST /v1/images/edits` | GPT Image 2／2.5（`gpt_image2` 帶 `image` 時） | 同步，**multipart/form-data**，回傳格式同上 |
 | `POST /v1/responses` | minimax | 非同步，提交 → 輪詢 |
 
-**gpt-image-2 的參考圖不能塞進 generations 的 payload**：上游會回 400 `Unknown parameter: 'image'`（實測確認）。（Agnes 是另一回事——它的參考圖走同一個端點的 `extra_body.image`，見下節。）`generations` 是純文生圖端點，圖生圖一律走 `edits`，而且圖是 multipart 的**檔案欄位**，不是 base64 字串——所以 `_submit_edit()` 用 `common.tensor_to_image_bytes()` 取原始 bytes 走 `common.post_multipart()`，不用 `tensor_to_data_url()`。`edits` 也不送 `response_format`，避免再吃一次 `unknown_parameter`；回傳由 `fetch_image_item()` 判讀（`b64_json` 與 `url` 都吃）。
+**GPT Image 2／2.5 的參考圖不能塞進 generations 的 payload**：上游會回 400 `Unknown parameter: 'image'`（實測確認）。（Agnes 是另一回事——它的參考圖走同一個端點的 `extra_body.image`，見下節。）`generations` 是純文生圖端點，圖生圖一律走 `edits`，而且圖是 multipart 的**檔案欄位**，不是 base64 字串——所以 `_submit_edit()` 用 `common.tensor_to_image_bytes()` 取原始 bytes 走 `common.post_multipart()`，不用 `tensor_to_data_url()`。2.5 文生圖依文件與上游預設省略 `response_format`，舊版 2 文生圖則保留 `response_format="b64_json"`。`edits` 也不送 `response_format`，避免再吃一次 `unknown_parameter`；回傳由 `fetch_image_item()` 判讀（`b64_json` 與 `url` 都吃）。
 
 ### Agnes Image 2.1 Flash 的參數事實（依官方文件）
 
@@ -107,12 +109,16 @@ print(f'OK {len(m.NODE_CLASS_MAPPINGS)} nodes')"
 - 官方建議客戶端逾時抓 60~360 秒，因此節點依 `size` 分兩段（1K/2K 180 秒、3K/4K 300 秒），
   不是共用 `DEFAULT_TIMEOUT`。
 
-### gpt-image-2 的參數事實（依官方文件）
+### GPT Image 2／2.5 的參數事實（依官方文件與已確認可用型號）
 
-文件：[文生圖](https://doc.dmxapi.cn/gpt-image-2-text-to-image.html)、[圖片編輯](https://doc.dmxapi.cn/gpt-image-2-image-edit.html)。
+文件：GPT Image 2 [文生圖](https://doc.dmxapi.cn/gpt-image-2-text-to-image.html)、[圖片編輯](https://doc.dmxapi.cn/gpt-image-2-image-edit.html)；GPT Image 2.5 [文生圖](https://doc.dmxapi.cn/gpt-image-2.5-text-to-image.html)、[圖片編輯](https://doc.dmxapi.cn/gpt-image-2.5-image-edit.html)。
 
-- **`quality`**：`auto`（預設）/ `high` / `medium` / `low`。這是**唯一能直接縮短生成時間**的參數，也就是撞上 60 秒上限時的第一順位解法。節點的預設維持 `auto`（不改上游預設），值為 `auto` 時不送這個欄位。
-- **模型變體**：`gpt-image-2`、`gpt-image-2-ssvip`（官方標示「更穩定的服務品質和更快的回應速度」）、`gpt-image-2-03`。**`gpt-image-2-03` 只支援 `n=1`**，其餘變體 1~10；節點的 `batch_size` 上限是 4，遇到 `-03` 會夾成 1 並記 warning（`SINGLE_IMAGE_ONLY_MODELS`）。
+- **2.5 模型變體**：`gpt-image-2.5-sunburst`、`gpt-image-2.5-sunburst-cdx`、`gpt-image-2.5-sunburst-ssvip`、`gpt-image-2.5-flare`、`gpt-image-2.5-flare-cdx`、`gpt-image-2.5-flare-ssvip`。`sunburst` 基礎型號是新預設、品質優先；`flare` 家族速度優先，是同步端點逾時時的模型切換首選。
+- **文件證據邊界**：官方 2.5 頁面列出 `sunburst` 與 `flare` 基礎 ID，並說明 CDX 的張數限制；兩個 `-ssvip` 變體是使用者實測確認可用。不要寫成官方頁面逐項列出上述六個完整 ID。
+- **舊版模型仍保留**：`gpt-image-2-03`、`gpt-image-2`、`gpt-image-2-ssvip`。
+- **`quality`**：節點順序固定為 `auto` / `low` / `medium` / `high` / `xhigh` / `max`，預設 `auto` 且不送欄位。`xhigh`、`max` 僅限 2.5；舊版模型選到這兩個值時，必須在解析 key 與付費提交前本地拒絕。降低 quality 仍是撞上 60 秒上限時的第一順位解法。
+- **張數限制**：`gpt-image-2-03` 最多 `n=1`；`gpt-image-2.5-sunburst-cdx`、`gpt-image-2.5-flare-cdx` 最多 `n=3`；其他模型由節點的 `batch_size` 上限限制為 4。`MODEL_BATCH_LIMITS` 負責前述特殊上限；`SINGLE_IMAGE_ONLY_MODELS` 僅為既有外部 workflow／測試保留。
+- **回傳格式**：2.5 純文生圖不送 `response_format`，舊版 2 純文生圖固定送 `b64_json`；圖片編輯不送該欄位，並以 `fetch_image_item()` 同時接受 `b64_json` 與 URL。
 - **`edits` 的 `image` 其實支援多張與公網 URL**，目前節點只送 batch 第一張，多張時記 warning。要做多參考圖時從這裡下手。
 - 其他未接的參數：`background`、`output_format`（`png` / `jpeg` / `webp`）、`output_compression`。
 - **沒有非同步模式**：gpt-image 系列沒有 `task_id` 或 `callback_url`，所以同步的 60 秒上限**沒有繞路可走**，只能靠 quality / 模型 / 尺寸 / prompt 長度把生成時間壓進去。新增節點前不要再花時間找非同步端點。

@@ -6,7 +6,7 @@
 
 ## ✨ 功能亮點
 
-- 支援 GPT Image 2 與 Agnes Image 2.1 Flash 文生圖、圖生圖。
+- 支援 GPT Image 2／2.5 與 Agnes Image 2.1 Flash 文生圖、圖生圖。
 - MiniMax 僅支援 `MiniMax-H3`：整合節點完成文生影片、首幀、尾幀及首尾幀生成，另有多模態參考節點支援參考圖／影片／音訊。
 - 影片節點統一輸出 `VIDEO`、影格、末幀、檔案路徑、影片 URL 與任務 ID。
 - 內建非同步任務輪詢、下載、ComfyUI 影片預覽、重試與 API key 認證形式探測。
@@ -109,15 +109,28 @@ setx DMXAPI_KEY "sk-your-key"
 
 ### 圖像生成
 
-1. 加入 `DMXAPI GPT Image 2` 或 `DMXAPI Agnes Image 2.1 Flash`。
+1. 加入 `DMXAPI GPT Image` 或 `DMXAPI Agnes Image 2.1 Flash`。
 2. 填寫 `prompt`，選擇模型與輸出設定。
 3. 在 `api_key` 填 key，或事先設定環境變數。
 4. 如需圖生圖，將 ComfyUI 的 `IMAGE` 接到節點的 `image` 輸入。
 5. 將 `IMAGE` 輸出接到預覽、儲存或後續工作流。
 
-GPT Image 2 帶參考圖時會自動改用 `/v1/images/edits` multipart 請求；Agnes Image 2.1 Flash 的文生圖與圖生圖則都使用 `/v1/images/generations`，參考圖放在 `extra_body.image`。
+`DMXAPI GPT Image` 同時支援 GPT Image 2 與 2.5。純文生圖使用 `/v1/images/generations` JSON；帶參考圖時自動改用 `/v1/images/edits` multipart。2.5 純文生圖依官方預設省略 `response_format`，舊版 2 模型則保留 `b64_json`；圖片編輯的回傳可為 `b64_json` 或 URL，節點都能解析。Agnes Image 2.1 Flash 的文生圖與圖生圖則都使用 `/v1/images/generations`，參考圖放在 `extra_body.image`。
 
-GPT Image 2 的 `size` 是實際像素尺寸，支援 `auto`、`1024x1024`、`1536x1024`、`1024x1536`、`2048x2048`、`2048x1152`、`3840x2160`、`2160x3840`。`gpt-image-2-03` 只支援一張輸出，即使 `batch_size` 設得更高也會自動改成 1。
+GPT Image 2.5 提供以下六個模型 ID：
+
+- `gpt-image-2.5-sunburst`（新預設，品質優先）
+- `gpt-image-2.5-sunburst-cdx`
+- `gpt-image-2.5-sunburst-ssvip`
+- `gpt-image-2.5-flare`（速度優先）
+- `gpt-image-2.5-flare-cdx`（速度優先）
+- `gpt-image-2.5-flare-ssvip`（速度優先）
+
+舊版 `gpt-image-2-03`、`gpt-image-2`、`gpt-image-2-ssvip` 仍保留。官方 2.5 頁面列出 `sunburst` 與 `flare` 基礎 ID，並說明 CDX 的張數限制；兩個 `-ssvip` 變體的可用性來自使用者實測確認，不代表每個後綴都由官方頁面逐項列出。
+
+`quality` 可選 `auto`、`low`、`medium`、`high`、`xhigh`、`max`；`xhigh` 與 `max` 僅限 2.5，舊版模型選到時會在送出請求前被本地拒絕。`gpt-image-2-03` 單次最多 1 張，`gpt-image-2.5-sunburst-cdx` 與 `gpt-image-2.5-flare-cdx` 單次最多 3 張，其餘模型由節點限制為最多 4 張。
+
+GPT Image 的 `size` 是實際像素尺寸，支援 `auto`、`1024x1024`、`1536x1024`、`1024x1536`、`2048x2048`、`2048x1152`、`3840x2160`、`2160x3840`。
 
 Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比例。參考圖 batch 最多使用前 5 張。
 
@@ -164,7 +177,7 @@ Agnes 的 `size` 是 `1K`、`2K`、`3K`、`4K` 檔位，`ratio` 另選畫面比�
 
 | 顯示名稱 | 用途 |
 | --- | --- |
-| `DMXAPI GPT Image 2` | GPT Image 2 文生圖與圖生圖。 |
+| `DMXAPI GPT Image` | GPT Image 2／2.5 文生圖與圖生圖；內部 ID／class 為相容既有 workflow 保持 `DMXAPI_GPT_Image2`。 |
 | `DMXAPI Agnes Image 2.1 Flash` | Agnes Image 2.1 Flash 文生圖、多參考圖合成。 |
 
 #### MiniMax
@@ -233,7 +246,7 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 | 環境變數 | 用途 | 優先序 |
 | --- | --- | --- |
 | `DMXAPI_KEY` | 所有節點的通用 fallback key。 | 節點 `api_key` 之後 |
-| `OPENAI_API_KEY` | GPT Image 2 的專屬 fallback。 | `DMXAPI_KEY` 之後 |
+| `OPENAI_API_KEY` | GPT Image 2／2.5 的專屬 fallback。 | `DMXAPI_KEY` 之後 |
 | `AGNES_API_KEY` | Agnes Image 2.1 Flash 的專屬 fallback。 | `DMXAPI_KEY` 之後 |
 | `MINIMAX_API_KEY` | MiniMax 節點的專屬 fallback。 | `DMXAPI_KEY` 之後 |
 
@@ -245,8 +258,8 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 
 | 方法 | 路徑 | 使用節點 | 說明 |
 | --- | --- | --- | --- |
-| `POST` | `/v1/images/generations` | GPT Image 2 純文生圖、Agnes 文生圖／圖生圖 | 同步回傳圖像資料。 |
-| `POST` | `/v1/images/edits` | GPT Image 2 圖生圖 | multipart/form-data，上傳參考圖檔案。 |
+| `POST` | `/v1/images/generations` | GPT Image 2／2.5 純文生圖、Agnes 文生圖／圖生圖 | 同步回傳圖像資料。 |
+| `POST` | `/v1/images/edits` | GPT Image 2／2.5 圖生圖 | multipart/form-data，上傳參考圖檔案。 |
 | `POST` | `/v1/responses` | MiniMax H3 | 提交非同步任務、輪詢狀態及取得結果。 |
 
 官方模型文件：
@@ -255,6 +268,8 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 - [DMXAPI Agnes Image 2.1 Flash 圖生圖](https://doc.dmxapi.cn/agnes-image-21-flash-i2i.html)
 - [DMXAPI GPT Image 2 文生圖](https://doc.dmxapi.cn/gpt-image-2-text-to-image.html)
 - [DMXAPI GPT Image 2 圖片編輯](https://doc.dmxapi.cn/gpt-image-2-image-edit.html)
+- [DMXAPI GPT Image 2.5 文生圖](https://doc.dmxapi.cn/gpt-image-2.5-text-to-image.html)
+- [DMXAPI GPT Image 2.5 圖片編輯](https://doc.dmxapi.cn/gpt-image-2.5-image-edit.html)
 - [DMXAPI MiniMax-H3 文生視頻](https://doc.dmxapi.cn/MiniMax-H3-text-to-video.html)
 - [DMXAPI MiniMax-H3 圖生視頻](https://doc.dmxapi.cn/MiniMax-H3-image-to-video.html)
 - [DMXAPI MiniMax-H3 多模態參考生視頻](https://doc.dmxapi.cn/MiniMax-H3-multimodal-reference-to-video.html)
@@ -265,7 +280,7 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 | --- | --- |
 | `__init__.py` | 合併並註冊所有節點模組。 |
 | `dmxapi_common.py` | API key、HTTP 請求與重試、輪詢、tensor 編解碼、影片下載與共用影片輸出。 |
-| `dmxapi_gpt_image2_node.py` | GPT Image 2 節點。 |
+| `dmxapi_gpt_image2_node.py` | GPT Image 2／2.5 節點；檔名與內部 `DMXAPI_GPT_Image2` 識別符保留以維持相容性。 |
 | `dmxapi_agnes_image.py` | Agnes Image 2.1 Flash 節點。 |
 | `dmxapi_minimax_h3_nodes.py` | MiniMax H3 的兩個節點：首尾幀整合節點與多模態參考生影片節點。 |
 | `requirements.txt` | Python 依賴清單。 |
@@ -295,7 +310,7 @@ PYTHONDONTWRITEBYTECODE=1 /path/to/ComfyUI/.venv/bin/python -c "import importlib
 
 ### 圖像生成逾時或連線被上游切斷
 
-同步圖像端點約有 60 秒回應限制。請依序嘗試：降低 `quality`、改用 `gpt-image-2-ssvip`、指定較小的 `size`（如 `1024x1024` 或 `2048x1152`）、縮短 prompt，並縮小或減少參考圖。請注意請求送出後才中斷，可能代表上游已收單並計費，避免盲目重複執行。
+同步圖像端點約有 60 秒回應限制。請依序嘗試：降低 `quality`、改用速度優先的完整 flare 家族（`gpt-image-2.5-flare`、`gpt-image-2.5-flare-cdx`、`gpt-image-2.5-flare-ssvip`）、指定較小的 `size`（如 `1024x1024` 或 `2048x1152`）、縮短 prompt，並縮小或減少參考圖。請注意請求送出後才中斷，可能代表上游已收單並計費，避免盲目重複執行。
 
 ### 影片沒有內嵌播放器
 
@@ -331,9 +346,9 @@ MiniMax H3 不接受只有 `reference_audio` 的參考組合。請再提供至�
 
 確認已在 ComfyUI 的 Python 環境安裝 `opencv-python` 或 `imageio`，且影片檔案可正常播放。程式會依序嘗試 OpenCV、imageio，並在只要求一幀時嘗試 `ffmpeg`。
 
-### GPT Image 2 的參考圖為什麼不是直接送 JSON？
+### GPT Image 的參考圖為什麼不是直接送 JSON？
 
-DMXAPI 的 GPT Image 2 `/v1/images/generations` 是純文生圖端點；帶參考圖時節點會改用 `/v1/images/edits` 的 multipart 檔案欄位。這與 Agnes Image 2.1 Flash 的 `extra_body.image` 協定不同，不能互換。
+DMXAPI 的 GPT Image 2／2.5 `/v1/images/generations` 是純文生圖端點；帶參考圖時節點會改用 `/v1/images/edits` 的 multipart 檔案欄位。這與 Agnes Image 2.1 Flash 的 `extra_body.image` 協定不同，不能互換。
 
 ## 🤝 貢獻指南
 

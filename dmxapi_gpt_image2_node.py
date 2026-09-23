@@ -1,5 +1,5 @@
 """
-DMXAPI GPT Image 2 圖像生成節點
+DMXAPI GPT Image 圖像生成節點
 
 走 OpenAI 相容的同步端點，提交後直接拿到影像：
 純文生圖打 /v1/images/generations（JSON），帶參考圖時改打 /v1/images/edits（multipart）。
@@ -20,8 +20,38 @@ from .dmxapi_common import (
 )
 
 
+GPT_IMAGE_25_MODELS = [
+    "gpt-image-2.5-sunburst",
+    "gpt-image-2.5-sunburst-cdx",
+    "gpt-image-2.5-sunburst-ssvip",
+    "gpt-image-2.5-flare",
+    "gpt-image-2.5-flare-cdx",
+    "gpt-image-2.5-flare-ssvip",
+]
+
+LEGACY_MODELS = [
+    "gpt-image-2-03",
+    "gpt-image-2",
+    "gpt-image-2-ssvip",
+]
+
+SUPPORTED_MODELS = GPT_IMAGE_25_MODELS + LEGACY_MODELS
+
+# 不同模型的單次生成張數上限；未列出的模型沿用節點 batch_size 上限 4。
+MODEL_BATCH_LIMITS = {
+    "gpt-image-2-03": 1,
+    "gpt-image-2.5-sunburst-cdx": 3,
+    "gpt-image-2.5-flare-cdx": 3,
+}
+
+
 class DMXAPI_GPT_Image2:
-    """調用 DMXAPI GPT Image 2 圖像生成介面。"""
+    """調用 DMXAPI GPT Image 圖像生成介面。"""
+
+    GPT_IMAGE_25_MODELS = GPT_IMAGE_25_MODELS
+    LEGACY_MODELS = LEGACY_MODELS
+    SUPPORTED_MODELS = SUPPORTED_MODELS
+    MODEL_BATCH_LIMITS = MODEL_BATCH_LIMITS
 
     # 每個選項都必須通過 _validate_size 的四項約束，新增前請先驗算
     SUPPORTED_SIZES = [
@@ -41,8 +71,8 @@ class DMXAPI_GPT_Image2:
             "required": {
                 "prompt": ("STRING", {"multiline": True, "default": ""}),
                 "model": (
-                    ["gpt-image-2-03", "gpt-image-2", "gpt-image-2-ssvip"],
-                    {"default": "gpt-image-2-03"},
+                    cls.SUPPORTED_MODELS,
+                    {"default": "gpt-image-2.5-sunburst"},
                 ),
                 "api_key": ("STRING", {"default": "", "multiline": False}),
                 "size": (cls.SUPPORTED_SIZES, {"default": "auto"}),
@@ -50,7 +80,10 @@ class DMXAPI_GPT_Image2:
                 # quality 是唯一能直接砍生成時間的旋鈕。同步端點約 60 秒就會被
                 # 上游切斷，auto（等同偏高品質）常常來不及；被切就往 medium / low 降。
                 # 擺在最後是為了不打亂既有 workflow 依位置存的 widgets_values。
-                "quality": (["auto", "low", "medium", "high"], {"default": "auto"}),
+                "quality": (
+                    ["auto", "low", "medium", "high", "xhigh", "max"],
+                    {"default": "auto"},
+                ),
             },
             "optional": {
                 "image": ("IMAGE",),
@@ -70,8 +103,7 @@ class DMXAPI_GPT_Image2:
     # 光傳就吃掉大半（實測 66 / 92 秒兩次都被切）；2048 對參考用途已綽綽有餘。
     REFERENCE_MAX_SIDE = 2048
 
-    # 官方文件註明 gpt-image-2-03 只支援 n=1（其餘變體 1~10）。節點的
-    # batch_size 上限是 4，送超過會被上游擋，因此這裡先夾住並示警。
+    # 保留既有常數供外部 workflow／測試相容；實際限制統一由 MODEL_BATCH_LIMITS 管理。
     SINGLE_IMAGE_ONLY_MODELS = ("gpt-image-2-03",)
 
     def _validate_size(self, size_str):
@@ -126,8 +158,9 @@ class DMXAPI_GPT_Image2:
             "model": model,
             "prompt": prompt,
             "n": int(batch_size),
-            "response_format": "b64_json",
         }
+        if model not in self.GPT_IMAGE_25_MODELS:
+            payload["response_format"] = "b64_json"
         if size != "auto":
             payload["size"] = size
         if quality != "auto":
@@ -174,19 +207,30 @@ class DMXAPI_GPT_Image2:
             IMAGES_EDITS_URL, fields, files, token, timeout=120, session=session
         )
 
-    def generate_image(self, prompt, model, api_key, size, quality, batch_size, image=None):
+    def generate_image(self, prompt, model, api_key, size, batch_size, quality, image=None):
         if not prompt.strip():
             raise ValueError("[DMXAPI Error] Prompt 不能為空！")
+
+        if quality in ("xhigh", "max") and model not in self.GPT_IMAGE_25_MODELS:
+            raise ValueError(
+                "[DMXAPI Error] quality='" + quality
+                + "' 僅支援 GPT Image 2.5 模型；請改用 2.5 模型或選擇 high 以下品質。"
+            )
 
         token = resolve_api_key(api_key, "OPENAI_API_KEY")
         dimensions = self._validate_size(size)
 
-        if model in self.SINGLE_IMAGE_ONLY_MODELS and int(batch_size) > 1:
+        original_batch_size = int(batch_size)
+        batch_limit = self.MODEL_BATCH_LIMITS.get(model)
+        if batch_limit is not None and original_batch_size > batch_limit:
             logger.warning(
-                "[DMXAPI] %s 只支援 n=1，batch_size=%s 已自動夾成 1。"
-                "要一次多張請改用 gpt-image-2 或 gpt-image-2-ssvip。", model, batch_size,
+                "[DMXAPI] %s 的 batch_size 上限為 %s，原始 batch_size=%s 已自動夾成 %s。",
+                model,
+                batch_limit,
+                original_batch_size,
+                batch_limit,
             )
-            batch_size = 1
+            batch_size = batch_limit
 
         logger.info(
             "[DMXAPI] 提交圖像%s model=%s size=%s quality=%s n=%s",
@@ -229,7 +273,8 @@ class DMXAPI_GPT_Image2:
             raise RuntimeError(
                 str(e) + "\n[DMXAPI] 圖像節點可調的加速順序："
                 "(1) quality 改 medium 或 low；"
-                "(2) model 改 gpt-image-2-ssvip（官方標示回應較快）；"
+                "(2) model 改用 gpt-image-2.5-flare、gpt-image-2.5-flare-cdx "
+                "或 gpt-image-2.5-flare-ssvip；"
                 "(3) size 指定 1024x1024 而非 auto；"
                 "(4) 縮短 prompt——多視角、多分鏈的描述會顯著拉長生成時間。"
             ) from e
@@ -247,5 +292,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "DMXAPI_GPT_Image2": "DMXAPI GPT Image 2",
+    "DMXAPI_GPT_Image2": "DMXAPI GPT Image",
 }

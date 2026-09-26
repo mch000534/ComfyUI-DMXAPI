@@ -71,7 +71,7 @@ MiniMax 有 `DMXAPI_MiniMax_Video` 與 `DMXAPI_MiniMax_Reference2V`；payload `m
 
 ## 圖像／HTTP 雷區
 
-- GPT Image 2.5 有 `gpt-image-2.5-sunburst`（節點的新預設、品質優先）、`gpt-image-2.5-sunburst-cdx`、`gpt-image-2.5-sunburst-ssvip`、`gpt-image-2.5-flare`（速度優先）、`gpt-image-2.5-flare-cdx`、`gpt-image-2.5-flare-ssvip`，六個都是使用者確認可用、由節點公開的選項。官方頁面列出兩個基礎 ID，文生圖頁面另提及兩個 CDX ID 的 `n<=3` 限制；兩個 `-ssvip` ID 是使用者確認。後綴變體依使用者需求實作相同的文生圖／圖片編輯路由，但本次未逐一執行兩個端點的付費冒煙測試，勿聲稱所有後綴都在兩個端點獲官方逐項記載或已實測。
+- GPT Image 2.5 有 `gpt-image-2.5-sunburst`（品質優先）、`gpt-image-2.5-sunburst-cdx`、`gpt-image-2.5-sunburst-ssvip`、`gpt-image-2.5-flare`（節點的新預設、速度優先）、`gpt-image-2.5-flare-cdx`、`gpt-image-2.5-flare-ssvip`，六個都是使用者確認可用、由節點公開的選項。官方頁面列出兩個基礎 ID，文生圖頁面另提及兩個 CDX ID 的 `n<=3` 限制；兩個 `-ssvip` ID 是使用者確認。後綴變體依使用者需求實作相同的文生圖／圖片編輯路由，但本次未逐一執行兩個端點的付費冒煙測試，勿聲稱所有後綴都在兩個端點獲官方逐項記載或已實測。
 - 舊版 `gpt-image-2-03` / `gpt-image-2` / `gpt-image-2-ssvip` 仍保留。`gpt-image-2-03` 僅 `n=1`；兩個 2.5 CDX 模型最多 `n=3`；其餘由節點限制為最多 4。特殊上限走 `MODEL_BATCH_LIMITS`，`SINGLE_IMAGE_ONLY_MODELS` 僅保留相容性。
 - GPT `quality` 為 `auto` / `low` / `medium` / `high` / `xhigh` / `max`；`xhigh` / `max` 僅限 2.5，舊版要在解析 key 前本地拒絕。下拉**必須留在 `INPUT_TYPES` 最後**（workflow `widgets_values` 依位置；插入中間會錯位）。`auto` 時不送該欄位。
 - 純文生圖：2.5 依文件／預設省略 `response_format`，舊版保留 `b64_json`。圖片編輯也不送該欄位；`fetch_image_item()` 解析器必須同時接受 `b64_json` 與 URL，但勿把解析能力寫成上游保證兩種格式都會回傳。

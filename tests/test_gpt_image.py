@@ -90,7 +90,7 @@ class GPTImageTests(unittest.TestCase):
         self.assertEqual(GPT_IMAGE.LEGACY_MODELS, self.LEGACY_MODELS)
         self.assertEqual(GPT_IMAGE.SUPPORTED_MODELS, expected)
         self.assertEqual(model_spec[0], expected)
-        self.assertEqual(model_spec[1]["default"], "gpt-image-2.5-sunburst")
+        self.assertEqual(model_spec[1]["default"], "gpt-image-2.5-flare")
 
     def test_quality_choices_and_default_are_exact(self):
         quality_spec = GPT_IMAGE.DMXAPI_GPT_Image2.INPUT_TYPES()["required"]["quality"]

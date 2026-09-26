@@ -72,7 +72,7 @@ class DMXAPI_GPT_Image2:
                 "prompt": ("STRING", {"multiline": True, "default": ""}),
                 "model": (
                     cls.SUPPORTED_MODELS,
-                    {"default": "gpt-image-2.5-sunburst"},
+                    {"default": "gpt-image-2.5-flare"},
                 ),
                 "api_key": ("STRING", {"default": "", "multiline": False}),
                 "size": (cls.SUPPORTED_SIZES, {"default": "auto"}),

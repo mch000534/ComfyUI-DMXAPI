@@ -119,10 +119,10 @@ setx DMXAPI_KEY "sk-your-key"
 
 GPT Image 2.5 提供以下六個模型 ID：
 
-- `gpt-image-2.5-sunburst`（節點的新預設，品質優先）
+- `gpt-image-2.5-sunburst`（品質優先）
 - `gpt-image-2.5-sunburst-cdx`
 - `gpt-image-2.5-sunburst-ssvip`
-- `gpt-image-2.5-flare`（速度優先）
+- `gpt-image-2.5-flare`（節點的新預設，速度優先）
 - `gpt-image-2.5-flare-cdx`
 - `gpt-image-2.5-flare-ssvip`
 

@@ -113,7 +113,7 @@ GPT 節點的畫布顯示名稱是 `DMXAPI GPT Image`；模組檔名 `dmxapi_gpt
 
 文件：GPT Image 2 [文生圖](https://doc.dmxapi.cn/gpt-image-2-text-to-image.html)、[圖片編輯](https://doc.dmxapi.cn/gpt-image-2-image-edit.html)；GPT Image 2.5 [文生圖](https://doc.dmxapi.cn/gpt-image-2.5-text-to-image.html)、[圖片編輯](https://doc.dmxapi.cn/gpt-image-2.5-image-edit.html)。
 
-- **2.5 模型變體**：`gpt-image-2.5-sunburst`、`gpt-image-2.5-sunburst-cdx`、`gpt-image-2.5-sunburst-ssvip`、`gpt-image-2.5-flare`、`gpt-image-2.5-flare-cdx`、`gpt-image-2.5-flare-ssvip`。六個都是使用者確認可用、由節點公開的選項。`sunburst` 基礎型號是節點的新預設、品質優先；只有 `gpt-image-2.5-flare` 基礎型號有速度優先的依據，是同步端點逾時時的模型切換首選。
+- **2.5 模型變體**：`gpt-image-2.5-sunburst`、`gpt-image-2.5-sunburst-cdx`、`gpt-image-2.5-sunburst-ssvip`、`gpt-image-2.5-flare`、`gpt-image-2.5-flare-cdx`、`gpt-image-2.5-flare-ssvip`。六個都是使用者確認可用、由節點公開的選項。`sunburst` 基礎型號品質優先；`gpt-image-2.5-flare` 基礎型號是節點的新預設，有速度優先的依據，也是同步端點逾時時的模型切換首選。
 - **文件證據邊界**：官方 2.5 頁面列出 `sunburst` 與 `flare` 基礎 ID，文生圖頁面另提及 `gpt-image-2.5-sunburst-cdx` 與 `gpt-image-2.5-flare-cdx` 的 `n<=3` 限制；兩個 `-ssvip` ID 是使用者確認。依使用者需求，後綴變體已實作與基礎型號一致的文生圖／圖片編輯路由，但本次沒有對每個後綴與兩個端點逐一執行付費冒煙測試。不要把「節點已實作」寫成「官方在兩個端點逐項記載且都已實測」。
 - **舊版模型仍保留**：`gpt-image-2-03`、`gpt-image-2`、`gpt-image-2-ssvip`。
 - **`quality`**：節點順序固定為 `auto` / `low` / `medium` / `high` / `xhigh` / `max`，預設 `auto` 且不送欄位。`xhigh`、`max` 僅限 2.5；舊版模型選到這兩個值時，必須在解析 key 與付費提交前本地拒絕。降低 quality 仍是撞上 60 秒上限時的第一順位解法。

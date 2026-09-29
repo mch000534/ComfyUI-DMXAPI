@@ -35,6 +35,9 @@ ENV/
 .env.*.local
 !.env.example
 
+# Self-update node's local version marker (machine-specific runtime state)
+.dmxapi_update_state.json
+
 # Test, coverage and type-checker caches
 .pytest_cache/
 .mypy_cache/

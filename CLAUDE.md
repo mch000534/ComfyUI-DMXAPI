@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 專案性質
 
-ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI 相容的第三方模型聚合閘道）的圖像／影片生成服務，共 4 個節點：2 個圖像節點與 2 個影片節點。
+ComfyUI 自訂節點包，封裝 **DMXAPI**（`https://www.dmxapi.cn`，OpenAI 相容的第三方模型聚合閘道）的圖像／影片生成服務，共 6 個節點：2 個圖像節點、2 個影片節點，以及 2 個不呼叫 DMXAPI 的工具節點（自我更新、設定 API Key）。
 
-這是**純 API 客戶端**，不做任何本地推論。`torch` / `numpy` / `Pillow` 只用於 ComfyUI tensor 與 base64 之間的轉換，`opencv-python` / `imageio` 只用於影片抽幀。修改時不要引入本地模型載入邏輯。
+呼叫 DMXAPI 的 4 個節點是**純 API 客戶端**，不做任何本地推論。`torch` / `numpy` / `Pillow` 只用於 ComfyUI tensor 與 base64 之間的轉換，`opencv-python` / `imageio` 只用於影片抽幀。修改時不要引入本地模型載入邏輯。另外 2 個工具節點（見下方「自我更新與設定 API Key 節點」一節）操作的是 GitHub 與本機檔案系統，不受此限制。
 
 ## 開發環境與指令
 
@@ -23,7 +23,7 @@ VENV=/Users/barry/Documents/ComfyUI/.venv/bin/python
 $VENV -m pip install -r requirements.txt
 
 # 語法檢查
-PYTHONPYCACHEPREFIX=/private/tmp/dmxapi-pycache $VENV -m py_compile __init__.py dmxapi_common.py dmxapi_agnes_image.py dmxapi_gpt_image2_node.py dmxapi_minimax_h3_nodes.py
+PYTHONPYCACHEPREFIX=/private/tmp/dmxapi-pycache $VENV -m py_compile __init__.py dmxapi_common.py dmxapi_agnes_image.py dmxapi_gpt_image2_node.py dmxapi_minimax_h3_nodes.py dmxapi_self_update.py dmxapi_set_api_key.py
 
 # 離線回歸測試
 PYTHONDONTWRITEBYTECODE=1 $VENV -m unittest discover -s tests -v
@@ -70,12 +70,14 @@ print(f'OK {len(m.NODE_CLASS_MAPPINGS)} nodes')"
 | [dmxapi_gpt_image2_node.py](dmxapi_gpt_image2_node.py) | GPT Image 2／2.5 圖像生成（1 個節點） |
 | [dmxapi_agnes_image.py](dmxapi_agnes_image.py) | Agnes Image 2.1 Flash 圖像生成（1 個節點） |
 | [dmxapi_minimax_h3_nodes.py](dmxapi_minimax_h3_nodes.py) | MiniMax H3 影片（2 個節點：首尾幀生成與多模態參考生影片） |
+| [dmxapi_self_update.py](dmxapi_self_update.py) | 自我更新節點（不呼叫 DMXAPI，操作 GitHub 與本機檔案系統） |
+| [dmxapi_set_api_key.py](dmxapi_set_api_key.py) | 設定 API Key 節點（不呼叫 DMXAPI，寫入本機 `.env`） |
 
-**節點模組不應自行組 headers、自行寫重試迴圈、自行做 base64 編碼或自行輪詢**——這些一律走 `dmxapi_common`。新增節點時先看共用模組有沒有現成的東西。
+**節點模組不應自行組 headers、自行寫重試迴圈、自行做 base64 編碼或自行輪詢**——這些一律走 `dmxapi_common`。新增節點時先看共用模組有沒有現成的東西。這條規則是給「呼叫 DMXAPI」的節點模組的；`dmxapi_self_update.py` 操作的是 GitHub（另一個完全不同的服務，沒有 DMXAPI 的認證/計費語意），刻意自成一套輕量重試邏輯，不套用 `dmxapi_common` 那套 POST-only 的 DMXAPI 專用機制。
 
 套件的註冊檔用 `_MODULES` 清單合併各模組的映射，並會在節點 ID 重複註冊時直接拋錯。新增節點模組時**必須**一併加進該清單，否則不會載入。
 
-GPT 節點的畫布顯示名稱是 `DMXAPI GPT Image`；模組檔名 `dmxapi_gpt_image2_node.py`、節點 ID 與 class `DMXAPI_GPT_Image2` 都是相容性介面，不因加入 2.5 而改名。模組專屬 key 後援仍是 `OPENAI_API_KEY`。全套仍只有 4 個註冊節點。
+GPT 節點的畫布顯示名稱是 `DMXAPI GPT Image`；模組檔名 `dmxapi_gpt_image2_node.py`、節點 ID 與 class `DMXAPI_GPT_Image2` 都是相容性介面，不因加入 2.5 而改名。模組專屬 key 後援仍是 `OPENAI_API_KEY`。呼叫 DMXAPI 的節點共 4 個，加上兩個工具節點，全套共 6 個註冊節點。
 
 ### 三個 API 端點
 
@@ -294,6 +296,25 @@ Key 的解析優先序：**節點輸入 > `DMXAPI_KEY` > 模組專屬環境變�
 | agnes | `AGNES_API_KEY` |
 | minimax | `MINIMAX_API_KEY` |
 
+### 自我更新與設定 API Key 節點
+
+`DMXAPI_SelfUpdate`（`dmxapi_self_update.py`）與 `DMXAPI_SetAPIKey`（`dmxapi_set_api_key.py`）是唯二不呼叫 DMXAPI 的節點，分別操作 GitHub 與本機 `.env`。兩者都是 `OUTPUT_NODE = True`（沒有下游連線時要能單獨當執行根節點跑），但都**刻意不定義 `IS_CHANGED`**——沿用 ComfyUI 預設的輸入雜湊快取，同一組輸入不會重跑，避免每次 Queue 都打 GitHub／改寫 `.env`。這條規則已經寫進 `tests/test_self_update.py` 的 regression test（`test_is_changed_is_not_defined`），不要為了「讓它每次都重跑」加回 `IS_CHANGED`。
+
+**`DMXAPI_SelfUpdate`**：兩段式，`mode="check_only"`（預設）只打 GitHub commits API（`https://api.github.com/repos/{owner}/{repo}/commits/{branch}`）比對本機與遠端 commit sha，**絕不寫入任何檔案**；`mode="apply"` 才會下載 zip、覆蓋套件程式碼。`run_trigger` 是仿照 `noise_seed` 的用法，純粹是「改了才重跑」的快取鍵，本身無意義。
+
+- `apply` 會**保留 `.env` 與 `.git`**——這是刻意修正 `install_DMXAPI_node_NOgit.command`／`.bat` 的缺口：那兩支外部安裝腳本是整包資料夾搬移取代，會把 `.env`、`.git` 一起洗掉；`DMXAPI_SelfUpdate` 的 apply 改成只覆蓋/新增 zip 裡有的檔案，`.env`、`.git` 與任何 zip 裡沒有的本機檔案原樣保留（後者會記一筆 warning，不會被更新也不會被刪除）。
+- 本機版本判斷順序（`_read_local_sha`）：`.git` 存在且 `git` 可執行 → `git rev-parse HEAD`；否則讀套件根目錄的 `.dmxapi_update_state.json`（apply 成功後才會寫入，已加進 `.gitignore`，屬於本機執行期產物）；都沒有則回報「未知」。
+- 全程只用 Python 標準庫操作檔案（`zipfile`／`shutil`／`tempfile`／`os.replace`），**不 shell out 到 `unzip`/`curl`**，確保 macOS 與 Windows 都能一致運作；`stage_dir`／`backup_dir` 都建在跟套件目錄同一層（`custom_nodes/`），讓最終搬移是同檔案系統內的快速 rename，不會退化成複製。`_move_with_retry()` 專門緩解 Windows 上防毒軟體／索引服務造成的短暫檔案鎖定（重試＋退避），macOS/Linux 幾乎用不到但不需要分平台判斷。
+- **套用後仍需重新啟動 ComfyUI 才會生效**——跟改任何節點程式碼一樣，ComfyUI 只在啟動時掃描 `custom_nodes/`，這個節點不能繞過這個限制。
+- GitHub 未授權 API 限流為每小時 60 次（per IP），連不上或被限流時降級回報「無法連線」，不拋例外把整個節點搞失敗。
+
+**`DMXAPI_SetAPIKey`**：把 `DMXAPI_KEY`（目前只支援這一個通用 fallback，`OPENAI_API_KEY`／`AGNES_API_KEY`／`MINIMAX_API_KEY` 仍須手動編輯 `.env`）寫進與 `dmxapi_common.py` 同層的 `.env`，並立即 `os.environ["DMXAPI_KEY"] = value`，不需要重啟就能讓其他節點用上新 Key。
+
+- 寫入邏輯是 `dmxapi_common.write_env_var()`，重用既有的 `_parse_dotenv_line()` 判斷每一行是不是要替換的變數，只更新/新增 `DMXAPI_KEY` 那一行，其餘既有變數、註解、空行原封不動；一律用雙引號包值，並用 `os.replace()` 做同檔名原子取代（Windows／POSIX 皆可），成功後 `os.chmod(0o600)` 收斂權限（POSIX 有效，Windows 上是無害的 no-op）。
+- **系統環境變數優先序不變**：`_load_dotenv()` 只在變數不存在於 `os.environ` 時才從 `.env` 寫入。這個節點直接 `os.environ[...] = value` 是本次進程的明確覆蓋，但如果作業系統本身已經設定過 `DMXAPI_KEY`，下次重啟 ComfyUI 後系統環境變數仍會贏過這裡寫進 `.env` 的值——這是既有優先序規則的自然結果，不是要修的 bug。
+- **外洩風險不能靠前端遮蔽完全解決**：`api_key` 欄位的值在執行當下仍會以明文送進 workflow prompt JSON，且 ComfyUI 預設會把整份 workflow 嵌進輸出圖片的 metadata。`web/dmxapi_set_api_key.js`（套件第一次加入 `WEB_DIRECTORY`／前端 JS）把欄位遮蔽成密碼樣式、執行成功後自動清空，只防得住「執行完之後才存檔/分享」的情況，不能防止使用者在填值後、還沒執行就存檔。回傳的 `REPORT` 字串一律用遮蔽後的片段（例如 `sk-...ab12`），不會出現完整明碼。
+- 新增前端擴充功能時放在 `web/`，且**必須實機在瀏覽器打開 ComfyUI Desktop 驗證**（widget 遮蔽、自動清空是否生效），不能只靠語法檢查——這個根目錄不含 ComfyUI 前端原始碼，無法靜態核對目前這版前端的 widget API。
+
 ### 錯誤處理策略
 
 `common.post_json()` 統一處理：
@@ -337,3 +358,4 @@ warning）；最後縮短 prompt，並縮小或減少參考圖，因為上傳時
 
 - 註解、日誌、節點顯示名稱一律**繁體中文**。
 - 日誌走 `common.logger`（`logging.getLogger("DMXAPI")`），不要用 `print()`。
+- 新增前端擴充功能放在 `web/`（透過 `__init__.py` 的 `WEB_DIRECTORY = "./web"` 載入），且必須實機在瀏覽器打開 ComfyUI Desktop 驗證，不能只靠語法檢查——這個根目錄不含 ComfyUI 前端原始碼，無法靜態核對前端 widget API。

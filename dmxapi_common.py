@@ -90,6 +90,45 @@ def _load_dotenv(path=None):
     return loaded
 
 
+def write_env_var(path, name, value):
+    """把單一變數寫進（或更新進）.env，保留其餘既有內容（其他變數、註解、空行）。
+
+    一律用雙引號包住值：_parse_dotenv_line 對「頭尾同一種引號」會整段原樣取出，
+    不會被值裡的空白或 # 誤判成註解，比不加引號更保險。用 os.replace 做同檔名
+    原子取代，Windows／POSIX 皆可；os.chmod 收斂權限在 POSIX 有效，Windows 上
+    是無害的 no-op。
+    """
+    lines = []
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as handle:
+            lines = handle.readlines()
+
+    new_lines = []
+    found = False
+    for line in lines:
+        parsed = _parse_dotenv_line(line)
+        if parsed is not None and parsed[0] == name:
+            new_lines.append('{0}="{1}"\n'.format(name, value))
+            found = True
+        else:
+            new_lines.append(line)
+
+    if not found:
+        if new_lines and not new_lines[-1].endswith("\n"):
+            new_lines[-1] += "\n"
+        new_lines.append('{0}="{1}"\n'.format(name, value))
+
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        handle.writelines(new_lines)
+    os.replace(tmp_path, path)
+
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 _load_dotenv()
 
 

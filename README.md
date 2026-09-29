@@ -2,7 +2,7 @@
 
 > 將 DMXAPI 的圖像與影片生成服務封裝成 ComfyUI 自訂節點。
 
-這是一個純 API 客戶端，不在本機載入或執行生成模型。目前共註冊 4 個節點：2 個圖像節點與 2 個影片節點。節點會把 ComfyUI 的文字、圖片與影片輸入轉成 DMXAPI 請求，再將結果轉回 ComfyUI 可用的 `IMAGE`、`VIDEO`、影片路徑與 URL。
+這是一個純 API 客戶端，不在本機載入或執行生成模型。目前共註冊 6 個節點：2 個圖像節點、2 個影片節點，以及 2 個不呼叫 DMXAPI 的工具節點（自我更新、設定 API Key）。節點會把 ComfyUI 的文字、圖片與影片輸入轉成 DMXAPI 請求，再將結果轉回 ComfyUI 可用的 `IMAGE`、`VIDEO`、影片路徑與 URL。
 
 ## ✨ 功能亮點
 
@@ -11,6 +11,7 @@
 - 影片節點統一輸出 `VIDEO`、影格、末幀、檔案路徑、影片 URL 與任務 ID。
 - 內建非同步任務輪詢、下載、ComfyUI 影片預覽、重試與 API key 認證形式探測。
 - 參考圖會在上傳前轉成 JPEG 並限制尺寸，降低同步 API 的上傳與逾時風險。
+- 內建「自我更新」與「設定 API Key」工具節點，可在畫布上直接檢查／套用套件最新版、寫入 `.env` 的 API Key，不需要手動跑安裝腳本或編輯檔案。
 
 ## 📋 系統需求
 
@@ -263,6 +264,19 @@ MiniMax H3 目前沒有公開的事後取件節點。生成節點仍會回傳 `T
 - 本機影片與音訊皆須單段 2～15 秒，且影片與音訊各自合計不超過 15 秒；本機單一影片上限 50 MB、單一音訊上限 15 MB。
 - 完整 JSON 請求體（含 base64 膨脹後的圖片、影片、音訊）上限 64 MB。大型素材建議改用公網 URL；URL 素材的時長與大小交由上游驗證。
 
+#### 工具
+
+這兩個節點不呼叫 DMXAPI，分別操作 GitHub 與本機 `.env`；都是 `OUTPUT_NODE`（沒有下游連線也能單獨執行），但輸入不變就不會重跑，不會每次 Queue 都動作。
+
+| 顯示名稱 | 用途 |
+| --- | --- |
+| `DMXAPI 節點自我更新` | 兩段式：`mode="check_only"`（預設）只比對本機與 GitHub `main` 分支的最新版本，**絕不動任何檔案**；`mode="apply"` 才會下載並套用更新。 |
+| `DMXAPI 設定 API Key` | 把 `DMXAPI_KEY` 寫進 `.env` 並立即同步到目前的 ComfyUI 進程，不需要重啟就能生效。 |
+
+**`DMXAPI 節點自我更新`**：`apply` 會保留現有的 `.env` 與 `.git`（不像 `install_DMXAPI_node_NOgit.command`／`.bat` 那樣整包覆蓋），任何本機才有、新版本沒有的檔案也會原樣保留並在主控台記一筆警告，不會被砍掉。**套用後仍需重新啟動 ComfyUI 才會生效**——跟改任何節點程式碼一樣，ComfyUI 只在啟動時掃描 `custom_nodes/`。`repo_owner_repo`／`branch` 兩個選填欄位一般不需更動，`install_requirements` 預設會在套用成功後重新執行 `pip install -r requirements.txt`。
+
+**`DMXAPI 設定 API Key`**：目前只支援 `DMXAPI_KEY`（通用 fallback），`OPENAI_API_KEY`／`AGNES_API_KEY`／`MINIMAX_API_KEY` 仍須依照上面「設定 API Key」一節手動編輯 `.env`。畫面上的欄位會被前端遮蔽成密碼樣式、執行成功後自動清空，但這**無法完全避免外洩風險**：ComfyUI 節點欄位值本來就會存進 workflow JSON、預設也會嵌進輸出圖片的 metadata，遮蔽只是不讓「看畫面的人」偷看到明碼。**請勿分享填了真實 Key 的 workflow 檔或圖片**，也不要在填值後、還沒執行就存檔。
+
 ## ⚙️ 設定檔說明
 
 目前沒有獨立設定檔；API key 可透過節點輸入、作業系統環境變數或專案目錄的 `.env` 提供。所有變數預設都是未設定。
@@ -313,6 +327,9 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 | `dmxapi_gpt_image2_node.py` | GPT Image 2／2.5 節點；檔名與內部 `DMXAPI_GPT_Image2` 識別符保留以維持相容性。 |
 | `dmxapi_agnes_image.py` | Agnes Image 2.1 Flash 節點。 |
 | `dmxapi_minimax_h3_nodes.py` | MiniMax H3 的兩個節點：首尾幀整合節點與多模態參考生影片節點。 |
+| `dmxapi_self_update.py` | 自我更新節點：檢查／套用套件最新版（GitHub `main` 分支），保留 `.env` 與 `.git`。 |
+| `dmxapi_set_api_key.py` | 設定 API Key 節點：把 `DMXAPI_KEY` 寫進 `.env` 並立即套用到目前的 ComfyUI 進程。 |
+| `web/dmxapi_set_api_key.js` | 前端擴充：把設定 API Key 節點的欄位遮蔽成密碼樣式並在執行後自動清空。 |
 | `requirements.txt` | Python 依賴清單。 |
 
 新增節點模組時，除了定義該模組的 `NODE_CLASS_MAPPINGS` 與 `NODE_DISPLAY_NAME_MAPPINGS`，也要把模組加入 `__init__.py` 的 `_MODULES`，否則 ComfyUI 不會載入它。
@@ -328,7 +345,7 @@ cd /path/to/ComfyUI/custom_nodes/ComfyUI-DMXAPI
 PYTHONDONTWRITEBYTECODE=1 /path/to/ComfyUI/.venv/bin/python -c "import importlib.util,sys; p='.'; s=importlib.util.spec_from_file_location('ComfyUI_DMXAPI',p+'/__init__.py',submodule_search_locations=[p]); m=importlib.util.module_from_spec(s); sys.modules['ComfyUI_DMXAPI']=m; s.loader.exec_module(m); print(len(m.NODE_CLASS_MAPPINGS), sorted(m.NODE_CLASS_MAPPINGS))"
 ```
 
-預期會看到 4 個節點。
+預期會看到 6 個節點。
 
 ### 收到 401 或認證失敗
 
@@ -379,6 +396,14 @@ MiniMax H3 不接受只有 `reference_audio` 的參考組合。請再提供至�
 ### GPT Image 的參考圖為什麼不是直接送 JSON？
 
 DMXAPI 的 GPT Image 2／2.5 `/v1/images/generations` 是純文生圖端點；帶參考圖時節點會改用 `/v1/images/edits` 的 multipart 檔案欄位。這與 Agnes Image 2.1 Flash 的 `extra_body.image` 協定不同，不能互換。
+
+### 套用自我更新後節點沒有變化
+
+`DMXAPI 節點自我更新` 的 `apply` 只負責下載並取代套件檔案，跟改任何節點程式碼一樣，**需要重新啟動 ComfyUI 才會生效**——ComfyUI 只在啟動時掃描 `custom_nodes/`。套用成功的訊息裡會提醒這件事，重啟後再確認一次版本。
+
+### 設定 API Key 後，重啟 ComfyUI 就失效了
+
+如果作業系統本身已經設定過 `DMXAPI_KEY` 環境變數，`DMXAPI 設定 API Key` 節點寫進 `.env` 的值在下次重啟後不會生效——系統環境變數的優先序高於 `.env`（見上方「設定檔說明」）。請改用作業系統層級設定該變數，或先取消系統環境變數再用這個節點。
 
 ## 🤝 貢獻指南
 

@@ -149,12 +149,14 @@ class MiniMaxSimplificationTests(unittest.TestCase):
             b"trimmed-mp4",
         )
 
-    def test_registered_node_ids_are_exactly_the_supported_four(self):
+    def test_registered_node_ids_are_exactly_the_supported_set(self):
         expected = {
             "DMXAPI_GPT_Image2",
             "DMXAPI_Agnes_Image21Flash",
             "DMXAPI_MiniMax_Video",
             "DMXAPI_MiniMax_Reference2V",
+            "DMXAPI_SelfUpdate",
+            "DMXAPI_SetAPIKey",
         }
         self.assertEqual(set(PACKAGE.NODE_CLASS_MAPPINGS), expected)
         self.assertEqual(set(PACKAGE.NODE_DISPLAY_NAME_MAPPINGS), expected)

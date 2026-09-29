@@ -106,7 +106,7 @@ async def _apply_update_route(request):
         return web.json_response({"applied": False, "report": report})
 
     applied, report = _apply_update(
-        package_dir, DEFAULT_REPO, DEFAULT_BRANCH, local_sha, remote_sha,
+        package_dir, DEFAULT_REPO, DEFAULT_BRANCH, local_sha, remote_sha, update_available,
         install_requirements=True, timeout_seconds=20, max_retries=3,
     )
     return web.json_response({"applied": applied, "report": report})

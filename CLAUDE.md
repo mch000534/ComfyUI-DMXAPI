@@ -303,6 +303,8 @@ Key 的解析優先序：**節點輸入 > `DMXAPI_KEY` > 模組專屬環境變�
 
 **`DMXAPI_SelfUpdate`**：兩段式，`mode="check_only"`（預設）只打 GitHub commits API（`https://api.github.com/repos/{owner}/{repo}/commits/{branch}`）比對本機與遠端 commit sha，**絕不寫入任何檔案**；`mode="apply"` 才會下載 zip、覆蓋套件程式碼。`run_trigger` 是仿照 `noise_seed` 的用法，純粹是「改了才重跑」的快取鍵，本身無意義。
 
+`force_update`（預設 `False`）：平常 `apply` 只在偵測到本機與遠端版本不同時才真的動作；本機與遠端相同、或連不上 GitHub 比不出來（例如撞到限流）時會直接跳過、什麼都不做。開啟 `force_update` 後，即使沒偵測到差異也會強制重新下載並覆蓋（仍保留 `.env`／`.git`）——**這個旗標只在 `mode="apply"` 時生效，`mode="check_only"` 一律不受影響、絕不寫檔**，這條規則有 `tests/test_self_update.py` 的 `test_force_update_does_not_bypass_check_only` 鎖住，不要為了方便繞過。`_apply_update()` 內部因此多了 `update_available`／`forced` 兩個參數，只影響 report 文字是否誠實反映「是不是被強制套用的」，不影響下載/覆蓋行為本身。強制套用又剛好抓不到遠端 sha 時，寫進 `.dmxapi_update_state.json` 的 `last_applied_sha` 會是 `null`，下次 `_read_local_sha()` 只能回報「未知」——這是已知、可接受的降級，等下次能正常連上 GitHub 再看真正版本即可，不需要額外修。
+
 - `apply` 會**保留 `.env` 與 `.git`**——這是刻意修正 `install_DMXAPI_node_NOgit.command`／`.bat` 的缺口：那兩支外部安裝腳本是整包資料夾搬移取代，會把 `.env`、`.git` 一起洗掉；`DMXAPI_SelfUpdate` 的 apply 改成只覆蓋/新增 zip 裡有的檔案，`.env`、`.git` 與任何 zip 裡沒有的本機檔案原樣保留（後者會記一筆 warning，不會被更新也不會被刪除）。
 - 本機版本判斷順序（`_read_local_sha`）：`.git` 存在且 `git` 可執行 → `git rev-parse HEAD`；否則讀套件根目錄的 `.dmxapi_update_state.json`（apply 成功後才會寫入，已加進 `.gitignore`，屬於本機執行期產物）；都沒有則回報「未知」。
 - 全程只用 Python 標準庫操作檔案（`zipfile`／`shutil`／`tempfile`／`os.replace`），**不 shell out 到 `unzip`/`curl`**，確保 macOS 與 Windows 都能一致運作；`stage_dir`／`backup_dir` 都建在跟套件目錄同一層（`custom_nodes/`），讓最終搬移是同檔案系統內的快速 rename，不會退化成複製。`_move_with_retry()` 專門緩解 Windows 上防毒軟體／索引服務造成的短暫檔案鎖定（重試＋退避），macOS/Linux 幾乎用不到但不需要分平台判斷。

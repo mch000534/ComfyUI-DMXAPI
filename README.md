@@ -270,7 +270,7 @@ MiniMax H3 目前沒有公開的事後取件節點。生成節點仍會回傳 `T
 
 | 顯示名稱 | 用途 |
 | --- | --- |
-| `DMXAPI 節點自我更新` | 兩段式：`mode="check_only"`（預設）只比對本機與 GitHub `main` 分支的最新版本，**絕不動任何檔案**；`mode="apply"` 才會下載並套用更新。 |
+| `DMXAPI 節點自我更新` | 兩段式：`mode="check_only"`（預設）只比對本機與 GitHub `main` 分支的最新版本，**絕不動任何檔案**；`mode="apply"` 才會下載並套用更新。`force_update` 可在本機與遠端版本相同、或連不上 GitHub 比對（例如撞到限流）時強制重新下載覆蓋；只在 `apply` 生效，`check_only` 不受影響。 |
 | `DMXAPI 設定 API Key` | 把 `DMXAPI_KEY` 寫進 `.env` 並立即同步到目前的 ComfyUI 進程，不需要重啟就能生效。 |
 
 **`DMXAPI 節點自我更新`**：`apply` 會保留現有的 `.env` 與 `.git`（不像 `install_DMXAPI_node_NOgit.command`／`.bat` 那樣整包覆蓋），任何本機才有、新版本沒有的檔案也會原樣保留並在主控台記一筆警告，不會被砍掉。**套用後仍需重新啟動 ComfyUI 才會生效**——跟改任何節點程式碼一樣，ComfyUI 只在啟動時掃描 `custom_nodes/`。`repo_owner_repo`／`branch` 兩個選填欄位一般不需更動，`install_requirements` 預設會在套用成功後重新執行 `pip install -r requirements.txt`。
@@ -406,6 +406,10 @@ DMXAPI 的 GPT Image 2／2.5 `/v1/images/generations` 是純文生圖端點；�
 ### 套用自我更新後節點沒有變化
 
 `DMXAPI 節點自我更新` 的 `apply` 只負責下載並取代套件檔案，跟改任何節點程式碼一樣，**需要重新啟動 ComfyUI 才會生效**——ComfyUI 只在啟動時掃描 `custom_nodes/`。套用成功的訊息裡會提醒這件事，重啟後再確認一次版本。
+
+### 檢查更新一直顯示「無法取得」／「遠端版本：無法取得」
+
+GitHub 未登入的 API 每小時只給同一個公網 IP 60 次額度，用完就會這樣，不是故障；`report` 會直接顯示是額度用完還是連不上網，額度用完的話也會估算大概還要等幾分鐘恢復。如果確定 GitHub 上有新版本、不想等額度恢復，可以把 `force_update` 打開再執行 `apply`——這樣即使版本比對失敗也會強制重新下載並套用（仍會保留 `.env`／`.git`）。
 
 ### 設定 API Key 後，重啟 ComfyUI 就失效了
 

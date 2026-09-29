@@ -309,8 +309,14 @@ def _build_report(mode, local_sha, remote_sha, update_available, applied, extra=
     return "\n".join(lines)
 
 
-def _apply_update(package_dir, repo, branch, local_sha, remote_sha,
-                   install_requirements, timeout_seconds, max_retries):
+def _apply_update(package_dir, repo, branch, local_sha, remote_sha, update_available,
+                   install_requirements, timeout_seconds, max_retries, forced=False):
+    """實際下載並套用更新。`update_available` 只影響報告文字是否誠實，不影響行為——
+
+    真正決定「要不要呼叫這個函式」的邏輯在呼叫端（run() / 設定畫面的路由）：
+    平常只有偵測到有更新才會呼叫；`force_update=True` 時，就算沒偵測到差異
+    （或根本連不上 GitHub 比不出來）呼叫端也會照樣呼叫這裡，此時 `forced=True`。
+    """
     parent_dir = os.path.dirname(package_dir)
     package_name = os.path.basename(package_dir)
 
@@ -320,7 +326,7 @@ def _apply_update(package_dir, repo, branch, local_sha, remote_sha,
         zip_path = os.path.join(download_dir, "repo.zip")
         if not _download_zip(repo, branch, zip_path, timeout_seconds, max_retries):
             return False, _build_report(
-                "apply", local_sha, remote_sha, True, False,
+                "apply", local_sha, remote_sha, update_available, False,
                 extra="無法從 GitHub 下載更新（zip 下載失敗），未做任何變更。",
             )
 
@@ -344,7 +350,7 @@ def _apply_update(package_dir, repo, branch, local_sha, remote_sha,
         shutil.rmtree(download_dir, ignore_errors=True)
         logger.warning("[DMXAPI] 準備更新內容時失敗：%s", error)
         return False, _build_report(
-            "apply", local_sha, remote_sha, True, False,
+            "apply", local_sha, remote_sha, update_available, False,
             extra="準備更新內容時失敗，未做任何變更：{0}".format(error),
         )
 
@@ -358,7 +364,7 @@ def _apply_update(package_dir, repo, branch, local_sha, remote_sha,
     except OSError as error:
         shutil.rmtree(stage_dir, ignore_errors=True)
         return False, _build_report(
-            "apply", local_sha, remote_sha, True, False,
+            "apply", local_sha, remote_sha, update_available, False,
             extra="無法備份現有版本，未做任何變更：{0}".format(error),
         )
 
@@ -367,7 +373,7 @@ def _apply_update(package_dir, repo, branch, local_sha, remote_sha,
     except OSError as error:
         _move_with_retry(backup_dir, package_dir)
         return False, _build_report(
-            "apply", local_sha, remote_sha, True, False,
+            "apply", local_sha, remote_sha, update_available, False,
             extra="套用更新時搬移檔案失敗，已還原成更新前的版本：{0}".format(error),
         )
 
@@ -377,7 +383,10 @@ def _apply_update(package_dir, repo, branch, local_sha, remote_sha,
         "git" if os.path.isdir(os.path.join(package_dir, ".git")) else "marker",
     )
 
-    extra = "已套用更新，需要重新啟動 ComfyUI 才會生效。"
+    extra = "已強制套用更新" if forced else "已套用更新"
+    extra += "，需要重新啟動 ComfyUI 才會生效。"
+    if forced and not update_available:
+        extra += "（本機與遠端版本相同或無法比對，仍照常重新下載並覆蓋）"
     if warnings:
         extra += " 有 {0} 個本機檔案不在新版本裡，已原樣保留：{1}".format(
             len(warnings), ", ".join(warnings)
@@ -420,6 +429,15 @@ class DMXAPI_SelfUpdate:
                     "default": True,
                     "tooltip": "apply 成功後是否對目前這個 ComfyUI 直譯器執行 pip install -r requirements.txt。",
                 }),
+                "force_update": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": (
+                        "只在 mode=\"apply\" 時有效：本機與遠端版本相同、或連不上 GitHub 比對版本"
+                        "（例如 API 額度用完）時，平常會直接跳過不做任何事；開啟這個選項後即使沒偵測到"
+                        "差異也會強制重新下載並覆蓋套件程式碼（仍會保留 .env 與 .git）。"
+                        "mode=\"check_only\" 時這個選項不生效，絕不會因為它而寫入任何檔案。"
+                    ),
+                }),
                 "timeout_seconds": ("INT", {"default": 20, "min": 5, "max": 120}),
                 "max_retries": ("INT", {"default": 3, "min": 0, "max": 10}),
             },
@@ -432,13 +450,17 @@ class DMXAPI_SelfUpdate:
     OUTPUT_NODE = True
 
     def run(self, mode, run_trigger, repo_owner_repo=DEFAULT_REPO, branch=DEFAULT_BRANCH,
-            install_requirements=True, timeout_seconds=20, max_retries=3):
+            install_requirements=True, force_update=False, timeout_seconds=20, max_retries=3):
         package_dir = os.path.dirname(os.path.abspath(__file__))
         local_sha, _source = _read_local_sha(package_dir)
         remote_sha, remote_error = _fetch_remote_sha(repo_owner_repo, branch, timeout_seconds, max_retries)
         update_available = bool(remote_sha) and remote_sha != local_sha
 
-        if mode == "check_only" or not update_available:
+        # force_update 只在 mode="apply" 時才有意義；check_only 一律只回報、絕不寫檔，
+        # 這條規則不能被 force_update 繞過。
+        should_apply = mode == "apply" and (update_available or force_update)
+
+        if not should_apply:
             report = _build_report(
                 mode, local_sha, remote_sha, update_available, False, extra=remote_error or "",
             )
@@ -448,8 +470,9 @@ class DMXAPI_SelfUpdate:
             }
 
         applied, report = _apply_update(
-            package_dir, repo_owner_repo, branch, local_sha, remote_sha,
+            package_dir, repo_owner_repo, branch, local_sha, remote_sha, update_available,
             install_requirements, timeout_seconds, max_retries,
+            forced=force_update and not update_available,
         )
         return {
             "ui": {"text": [report]},

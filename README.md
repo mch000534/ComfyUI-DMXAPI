@@ -337,6 +337,9 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 | `web/dmxapi_set_api_key.js` | 前端擴充：把設定 API Key 節點的欄位遮蔽成密碼樣式並在執行後自動清空；另外註冊 ComfyUI 設定畫面裡的 DMXAPI API Key 選項。 |
 | `web/dmxapi_self_update.js` | 前端擴充：在 ComfyUI 設定畫面加入「檢查更新」／「套用更新」兩個開關。 |
 | `requirements.txt` | Python 依賴清單。 |
+| `pyproject.toml` | 發布到 [Comfy Registry](https://registry.comfy.org) 用的套件清單，發布成功後節點會自動可在 ComfyUI-Manager 搜尋到。 |
+| `.github/workflows/publish_action.yml` | 推到 `main` 且 `pyproject.toml` 有變動時，自動呼叫 `Comfy-Org/publish-node-action` 發布新版本；需要先在 repo 設定 `REGISTRY_ACCESS_TOKEN` secret。 |
+| `LICENSE` | MIT License。 |
 
 新增節點模組時，除了定義該模組的 `NODE_CLASS_MAPPINGS` 與 `NODE_DISPLAY_NAME_MAPPINGS`，也要把模組加入 `__init__.py` 的 `_MODULES`，否則 ComfyUI 不會載入它。
 
@@ -432,4 +435,4 @@ GitHub 未登入的 API 每小時只給同一個公網 IP 60 次額度，用完�
 
 ## 📄 授權
 
-目前專案目錄沒有附帶 `LICENSE` 檔案，因此尚未在程式碼層明確宣告授權條款。重新發布或納入其他專案前，請先向維護者確認授權與 DMXAPI 服務的使用條款。
+本專案採用 [MIT License](LICENSE)。重新發布或納入其他專案前，請仍先向維護者確認 DMXAPI 服務本身的使用條款（授權涵蓋這個 ComfyUI 節點包的程式碼，不涵蓋 DMXAPI 這個第三方服務的條款）。

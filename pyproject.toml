@@ -1,0 +1,23 @@
+[project]
+name = "comfyui-dmxapi"
+description = "封裝 DMXAPI（www.dmxapi.cn）圖像／影片生成服務的 ComfyUI 自訂節點包，純 API 客戶端，不做本地推論。"
+version = "1.0.0"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = [
+    "torch",
+    "numpy",
+    "Pillow",
+    "requests",
+    "opencv-python",
+    "imageio",
+]
+
+[project.urls]
+Repository = "https://github.com/mch000534/ComfyUI-DMXAPI"
+
+[tool.comfy]
+# Publisher ID 需與 registry.comfy.org 帳號頁面上、「@」後面顯示的字串完全一致
+# （建立後無法更改）；發布前請先到帳號頁面核對這個值是否正確。
+PublisherId = "mch000534"
+DisplayName = "ComfyUI-DMXAPI"

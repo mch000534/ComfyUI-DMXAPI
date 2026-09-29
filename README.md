@@ -275,7 +275,11 @@ MiniMax H3 目前沒有公開的事後取件節點。生成節點仍會回傳 `T
 
 **`DMXAPI 節點自我更新`**：`apply` 會保留現有的 `.env` 與 `.git`（不像 `install_DMXAPI_node_NOgit.command`／`.bat` 那樣整包覆蓋），任何本機才有、新版本沒有的檔案也會原樣保留並在主控台記一筆警告，不會被砍掉。**套用後仍需重新啟動 ComfyUI 才會生效**——跟改任何節點程式碼一樣，ComfyUI 只在啟動時掃描 `custom_nodes/`。`repo_owner_repo`／`branch` 兩個選填欄位一般不需更動，`install_requirements` 預設會在套用成功後重新執行 `pip install -r requirements.txt`。
 
+也可以不放節點，直接在 ComfyUI 的「設定」畫面操作：分類 **DMXAPI → 自我更新**，有「檢查更新」與「套用更新」兩個開關（切成開啟即觸發，動作結束後會自動撥回關閉；套用前會再跳出一次確認對話框）。結果用彈出視窗顯示，跟節點走同一套 check/apply 邏輯，效果完全一致。
+
 **`DMXAPI 設定 API Key`**：目前只支援 `DMXAPI_KEY`（通用 fallback），`OPENAI_API_KEY`／`AGNES_API_KEY`／`MINIMAX_API_KEY` 仍須依照上面「設定 API Key」一節手動編輯 `.env`。畫面上的欄位會被前端遮蔽成密碼樣式、執行成功後自動清空，但這**無法完全避免外洩風險**：ComfyUI 節點欄位值本來就會存進 workflow JSON、預設也會嵌進輸出圖片的 metadata，遮蔽只是不讓「看畫面的人」偷看到明碼。**請勿分享填了真實 Key 的 workflow 檔或圖片**，也不要在填值後、還沒執行就存檔。
+
+也可以不放節點，直接在 ComfyUI 的「設定」畫面設定：分類 **DMXAPI → API Key → DMXAPI_KEY**，效果跟節點完全一樣（同一個 `.env`、同一個優先序），不需要重啟就能生效。這裡的值存在 ComfyUI 自己的使用者設定檔，**不會**像節點那樣被存進 workflow JSON 或圖片 metadata，是比節點更安全的入口，建議優先用這個；只有在想把「設定 Key」寫進 workflow 自動化流程時才需要用節點。
 
 ## ⚙️ 設定檔說明
 
@@ -329,7 +333,9 @@ ComfyUI/custom_nodes/ComfyUI-DMXAPI/.env
 | `dmxapi_minimax_h3_nodes.py` | MiniMax H3 的兩個節點：首尾幀整合節點與多模態參考生影片節點。 |
 | `dmxapi_self_update.py` | 自我更新節點：檢查／套用套件最新版（GitHub `main` 分支），保留 `.env` 與 `.git`。 |
 | `dmxapi_set_api_key.py` | 設定 API Key 節點：把 `DMXAPI_KEY` 寫進 `.env` 並立即套用到目前的 ComfyUI 進程。 |
-| `web/dmxapi_set_api_key.js` | 前端擴充：把設定 API Key 節點的欄位遮蔽成密碼樣式並在執行後自動清空。 |
+| `dmxapi_server_routes.py` | 給 ComfyUI 設定畫面用的 `/dmxapi/api_key`、`/dmxapi/self_update/*` 路由，分別跟設定 API Key／自我更新節點共用同一套底層邏輯。 |
+| `web/dmxapi_set_api_key.js` | 前端擴充：把設定 API Key 節點的欄位遮蔽成密碼樣式並在執行後自動清空；另外註冊 ComfyUI 設定畫面裡的 DMXAPI API Key 選項。 |
+| `web/dmxapi_self_update.js` | 前端擴充：在 ComfyUI 設定畫面加入「檢查更新」／「套用更新」兩個開關。 |
 | `requirements.txt` | Python 依賴清單。 |
 
 新增節點模組時，除了定義該模組的 `NODE_CLASS_MAPPINGS` 與 `NODE_DISPLAY_NAME_MAPPINGS`，也要把模組加入 `__init__.py` 的 `_MODULES`，否則 ComfyUI 不會載入它。

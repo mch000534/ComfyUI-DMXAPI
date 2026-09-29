@@ -14,15 +14,9 @@ JSON、預設也會嵌進輸出圖片的 metadata，請勿分享填了真實 Key
 
 import os
 
-from .dmxapi_common import logger, write_env_var
+from .dmxapi_common import logger, mask_secret, write_env_var
 
 _ENV_VAR_NAME = "DMXAPI_KEY"
-
-
-def _mask(value):
-    if len(value) <= 8:
-        return "****"
-    return value[:3] + "..." + value[-4:]
 
 
 class DMXAPI_SetAPIKey:
@@ -60,7 +54,7 @@ class DMXAPI_SetAPIKey:
         os.environ[_ENV_VAR_NAME] = api_key
 
         report = "[DMXAPI] 已寫入 .env：{0}={1}（已同步套用到目前 ComfyUI 進程，不需重啟）".format(
-            _ENV_VAR_NAME, _mask(api_key)
+            _ENV_VAR_NAME, mask_secret(api_key)
         )
         logger.info(report)
         return {"ui": {"text": [report]}, "result": (report,)}

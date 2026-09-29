@@ -10,6 +10,7 @@ from . import dmxapi_gpt_image2_node
 from . import dmxapi_minimax_h3_nodes
 from . import dmxapi_self_update
 from . import dmxapi_set_api_key
+from . import dmxapi_server_routes
 
 _MODULES = [
     dmxapi_agnes_image,
@@ -31,6 +32,10 @@ for _module in _MODULES:
             )
     NODE_CLASS_MAPPINGS.update(_module.NODE_CLASS_MAPPINGS)
     NODE_DISPLAY_NAME_MAPPINGS.update(_module.NODE_DISPLAY_NAME_MAPPINGS)
+
+# 不是節點模組，沒有 NODE_CLASS_MAPPINGS，不放進 _MODULES；只在真的跑在 ComfyUI
+# 進程內才會真的註冊路由，裸 Python（測試／冒煙檢查）下是安全的 no-op。
+dmxapi_server_routes.register_routes()
 
 WEB_DIRECTORY = "./web"
 

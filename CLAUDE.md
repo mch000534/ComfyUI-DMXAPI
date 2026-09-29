@@ -72,6 +72,7 @@ print(f'OK {len(m.NODE_CLASS_MAPPINGS)} nodes')"
 | [dmxapi_minimax_h3_nodes.py](dmxapi_minimax_h3_nodes.py) | MiniMax H3 影片（2 個節點：首尾幀生成與多模態參考生影片） |
 | [dmxapi_self_update.py](dmxapi_self_update.py) | 自我更新節點（不呼叫 DMXAPI，操作 GitHub 與本機檔案系統） |
 | [dmxapi_set_api_key.py](dmxapi_set_api_key.py) | 設定 API Key 節點（不呼叫 DMXAPI，寫入本機 `.env`） |
+| [dmxapi_server_routes.py](dmxapi_server_routes.py) | 給 ComfyUI 設定畫面用的 `/dmxapi/api_key` 路由（不是節點，不進 `_MODULES`） |
 
 **節點模組不應自行組 headers、自行寫重試迴圈、自行做 base64 編碼或自行輪詢**——這些一律走 `dmxapi_common`。新增節點時先看共用模組有沒有現成的東西。這條規則是給「呼叫 DMXAPI」的節點模組的；`dmxapi_self_update.py` 操作的是 GitHub（另一個完全不同的服務，沒有 DMXAPI 的認證/計費語意），刻意自成一套輕量重試邏輯，不套用 `dmxapi_common` 那套 POST-only 的 DMXAPI 專用機制。
 
@@ -310,10 +311,18 @@ Key 的解析優先序：**節點輸入 > `DMXAPI_KEY` > 模組專屬環境變�
 
 **`DMXAPI_SetAPIKey`**：把 `DMXAPI_KEY`（目前只支援這一個通用 fallback，`OPENAI_API_KEY`／`AGNES_API_KEY`／`MINIMAX_API_KEY` 仍須手動編輯 `.env`）寫進與 `dmxapi_common.py` 同層的 `.env`，並立即 `os.environ["DMXAPI_KEY"] = value`，不需要重啟就能讓其他節點用上新 Key。
 
-- 寫入邏輯是 `dmxapi_common.write_env_var()`，重用既有的 `_parse_dotenv_line()` 判斷每一行是不是要替換的變數，只更新/新增 `DMXAPI_KEY` 那一行，其餘既有變數、註解、空行原封不動；一律用雙引號包值，並用 `os.replace()` 做同檔名原子取代（Windows／POSIX 皆可），成功後 `os.chmod(0o600)` 收斂權限（POSIX 有效，Windows 上是無害的 no-op）。
+- 寫入邏輯是 `dmxapi_common.write_env_var()`，重用既有的 `_parse_dotenv_line()` 判斷每一行是不是要替換的變數，只更新/新增 `DMXAPI_KEY` 那一行，其餘既有變數、註解、空行原封不動；一律用雙引號包值，並用 `os.replace()` 做同檔名原子取代（Windows／POSIX 皆可），成功後 `os.chmod(0o600)` 收斂權限（POSIX 有效，Windows 上是無害的 no-op）。遮蔽邏輯是 `dmxapi_common.mask_secret()`（共用函式，節點與 `dmxapi_server_routes.py` 都走這個，不要各寫一份）。
 - **系統環境變數優先序不變**：`_load_dotenv()` 只在變數不存在於 `os.environ` 時才從 `.env` 寫入。這個節點直接 `os.environ[...] = value` 是本次進程的明確覆蓋，但如果作業系統本身已經設定過 `DMXAPI_KEY`，下次重啟 ComfyUI 後系統環境變數仍會贏過這裡寫進 `.env` 的值——這是既有優先序規則的自然結果，不是要修的 bug。
 - **外洩風險不能靠前端遮蔽完全解決**：`api_key` 欄位的值在執行當下仍會以明文送進 workflow prompt JSON，且 ComfyUI 預設會把整份 workflow 嵌進輸出圖片的 metadata。`web/dmxapi_set_api_key.js`（套件第一次加入 `WEB_DIRECTORY`／前端 JS）把欄位遮蔽成密碼樣式、執行成功後自動清空，只防得住「執行完之後才存檔/分享」的情況，不能防止使用者在填值後、還沒執行就存檔。回傳的 `REPORT` 字串一律用遮蔽後的片段（例如 `sk-...ab12`），不會出現完整明碼。
 - 新增前端擴充功能時放在 `web/`，且**必須實機在瀏覽器打開 ComfyUI Desktop 驗證**（widget 遮蔽、自動清空是否生效），不能只靠語法檢查——這個根目錄不含 ComfyUI 前端原始碼，無法靜態核對目前這版前端的 widget API。
+
+**ComfyUI 設定畫面裡的第二個入口**：`web/dmxapi_set_api_key.js` 還另外註冊了一個 `settings` 項目（分類 `["DMXAPI", "API Key", "DMXAPI_KEY"]`——刻意指定，不指定才會落到 ComfyUI 預設的「其他」分類），對應的後端是 `dmxapi_server_routes.py` 的 `GET`／`POST /dmxapi/api_key`，跟節點共用同一個 `write_env_var()`／`.env` 路徑，效果完全一致。這裡的值存在 ComfyUI 自己的使用者設定檔，**不會**被存進 workflow JSON 或圖片 metadata，是比節點更安全的入口。
+
+`DMXAPI_SelfUpdate` 同樣有第二個入口：`web/dmxapi_self_update.js` 在設定畫面分類 `["DMXAPI", "自我更新", ...]` 底下註冊了「檢查更新」／「套用更新」兩個 `type: "boolean"` 開關，對應後端 `dmxapi_server_routes.py` 的 `GET /dmxapi/self_update/check`、`POST /dmxapi/self_update/apply`，直接 import 並重用 `dmxapi_self_update.py` 的 `_read_local_sha()`／`_fetch_remote_sha()`／`_apply_update()`／`_build_report()`，**不要另外重寫一份 check/apply 邏輯**。設定畫面沒有原生的「一次性按鈕」型別可用（或至少這個 repo 沒辦法確認有沒有），所以用 boolean 開關模擬：切成開啟才觸發動作，動作結束後前端會呼叫 `app.ui.settings.setSettingValue(id, false)` 把開關撥回關閉，讓它單純是一次性觸發、不是持續生效的設定；「套用更新」在送出 POST 前還會先跳一次 `confirm()` 對話框，因為它會覆蓋套件程式碼。結果目前用 `alert()` 顯示，跟節點的 `REPORT` 走同一套 `_build_report()` 文字格式。
+
+`dmxapi_server_routes.py` 對 `server.PromptServer` 與 `aiohttp` 都是延遲、包 try/except 的 import——理由跟 `comfy_api` 一樣：離線測試／冒煙測試是用 `importlib` 在裸 Python 下載入 `__init__.py`，這時候 `server` 模組根本不存在，`register_routes()` 偵測到 `PromptServer is None` 就直接跳過、不拋例外（`tests/test_server_routes.py` 的 `test_register_routes_is_a_noop_without_prompt_server` 鎖住這個行為，不要拿掉）。這個模組**沒有** `NODE_CLASS_MAPPINGS`，不能放進 `__init__.py` 的 `_MODULES`（那個迴圈假設每個成員都有節點映射），而是在合併節點映射之後獨立呼叫 `dmxapi_server_routes.register_routes()`。
+
+設定畫面 `settings` 項目的確切呈現方式（`type`／`category`／`onChange` 的行為、boolean 開關模擬按鈕這個做法能不能用、`app.ui.settings.setSettingValue()` 這個 API 名稱對不對、要不要把目前已設定 Key 的遮蔽片段動態顯示在欄位上）同樣**必須實機驗證**——這個根目錄不含 ComfyUI 的設定框架原始碼；目前 API Key 那邊的 `setup()` 只是把遮蔽片段印到瀏覽器 console，尚未確認能否進一步動態塞進畫面上的提示文字。
 
 ### 錯誤處理策略
 

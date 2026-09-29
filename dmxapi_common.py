@@ -129,6 +129,13 @@ def write_env_var(path, name, value):
         pass
 
 
+def mask_secret(value):
+    """把密鑰遮蔽成安全可以顯示/記錄的片段，絕不回傳完整明碼。"""
+    if len(value) <= 8:
+        return "****"
+    return value[:3] + "..." + value[-4:]
+
+
 _load_dotenv()
 
 

@@ -39,7 +39,7 @@ cd /path/to/ComfyUI/custom_nodes/ComfyUI-DMXAPI
 
 #### macOS
 
-下載並解壓縮 `install_DMXAPI_node_NOgit.zip`，雙擊裡面的 `install_DMXAPI_node_NOgit.app`（顯示名稱「安裝 ComfyUI-DMXAPI」）。它會自動尋找同層的 `install_DMXAPI_node_NOgit.command` 並在「終端機」啟動安裝流程；找不到時會自動從 GitHub 下載一份再執行。
+[下載並解壓縮 `install_DMXAPI_node_NOgit.zip`](https://raw.githubusercontent.com/mch000534/ComfyUI-DMXAPI/main/install_DMXAPI_node_NOgit.zip)，雙擊裡面的 `install_DMXAPI_node_NOgit.app`（顯示名稱「安裝 ComfyUI-DMXAPI」）。它會自動尋找同層的 `install_DMXAPI_node_NOgit.command` 並在「終端機」啟動安裝流程；找不到時會自動從 GitHub 下載一份再執行。
 
 若只拿到裸的 `.command` 檔（沒有 `.app`），請改用終端機執行，並先補上執行權限與移除隔離屬性：
 
@@ -59,7 +59,7 @@ COMFYUI_ROOT="/你的/ComfyUI路徑" ./install_DMXAPI_node_NOgit.command
 
 #### Windows
 
-直接雙擊 `install_DMXAPI_node_NOgit.bat`。腳本會把節點下載、解壓縮到 ComfyUI Desktop 預設路徑（`%USERPROFILE%\AppData\Local\Comfy-Desktop\ComfyUI-Installs\ComfyUI\ComfyUI\custom_nodes`），並用同一預設路徑下 ComfyUI Desktop 內建的 Python 安裝依賴；找不到時會改用系統 `python`。若你的 ComfyUI 並非安裝在這個預設路徑，請改用前面「安裝」段落的手動方式。
+[直接下載並雙擊 `install_DMXAPI_node_NOgit.bat`](https://raw.githubusercontent.com/mch000534/ComfyUI-DMXAPI/main/install_DMXAPI_node_NOgit.bat)。腳本會把節點下載、解壓縮到 ComfyUI Desktop 預設路徑（`%USERPROFILE%\AppData\Local\Comfy-Desktop\ComfyUI-Installs\ComfyUI\ComfyUI\custom_nodes`），並用同一預設路徑下 ComfyUI Desktop 內建的 Python 安裝依賴；找不到時會改用系統 `python`。若你的 ComfyUI 並非安裝在這個預設路徑，請改用前面「安裝」段落的手動方式。
 
 兩種安裝檔安裝完成後都請重新啟動 ComfyUI。
 

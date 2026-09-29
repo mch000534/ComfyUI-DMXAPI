@@ -75,9 +75,11 @@ async def _check_for_update(request):
     """對應設定畫面的「檢查更新」開關；GET，絕不寫入任何檔案。"""
     package_dir = _package_dir()
     local_sha, _source = _read_local_sha(package_dir)
-    remote_sha = _fetch_remote_sha(DEFAULT_REPO, DEFAULT_BRANCH, timeout_seconds=20, max_retries=3)
+    remote_sha, remote_error = _fetch_remote_sha(DEFAULT_REPO, DEFAULT_BRANCH, timeout_seconds=20, max_retries=3)
     update_available = bool(remote_sha) and remote_sha != local_sha
-    report = _build_report("check_only", local_sha, remote_sha, update_available, False)
+    report = _build_report(
+        "check_only", local_sha, remote_sha, update_available, False, extra=remote_error or "",
+    )
     return web.json_response({
         "report": report,
         "update_available": update_available,
@@ -94,11 +96,13 @@ async def _apply_update_route(request):
     """
     package_dir = _package_dir()
     local_sha, _source = _read_local_sha(package_dir)
-    remote_sha = _fetch_remote_sha(DEFAULT_REPO, DEFAULT_BRANCH, timeout_seconds=20, max_retries=3)
+    remote_sha, remote_error = _fetch_remote_sha(DEFAULT_REPO, DEFAULT_BRANCH, timeout_seconds=20, max_retries=3)
     update_available = bool(remote_sha) and remote_sha != local_sha
 
     if not update_available:
-        report = _build_report("apply", local_sha, remote_sha, update_available, False)
+        report = _build_report(
+            "apply", local_sha, remote_sha, update_available, False, extra=remote_error or "",
+        )
         return web.json_response({"applied": False, "report": report})
 
     applied, report = _apply_update(

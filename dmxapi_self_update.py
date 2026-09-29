@@ -58,26 +58,65 @@ def _get_with_retry(url, headers, timeout_seconds, max_retries, stream=False):
         else:
             if resp.status_code == 200:
                 return resp
-            logger.warning("[DMXAPI] %s 回應 %s，稍後重試", url, resp.status_code)
             last_response = resp
+            if resp.status_code == 403 and resp.headers.get("X-RateLimit-Remaining") == "0":
+                # GitHub 未登入 API 的速率限制（每小時 60 次，per IP）——同一分鐘內
+                # 重試也不會恢復，直接放棄，不要浪費退避時間硬試滿 max_retries 次。
+                logger.warning("[DMXAPI] %s 已達 GitHub API 速率限制，不再重試。", url)
+                return resp
+            logger.warning("[DMXAPI] %s 回應 %s，稍後重試", url, resp.status_code)
         if attempt < max_retries:
             time.sleep(2 ** attempt)
     return last_response
 
 
+def _format_rate_limit_reset(reset_header_value):
+    """把 X-RateLimit-Reset（Unix 秒數）換算成人看得懂的剩餘時間；解析失敗回傳 None。"""
+    try:
+        reset_epoch = int(reset_header_value)
+    except (TypeError, ValueError):
+        return None
+    remaining_seconds = max(0, reset_epoch - time.time())
+    remaining_minutes = int(remaining_seconds // 60) + (1 if remaining_seconds % 60 else 0)
+    reset_clock = time.strftime("%H:%M UTC", time.gmtime(reset_epoch))
+    return "約 {0} 分鐘後（{1}）恢復".format(remaining_minutes, reset_clock)
+
+
 def _fetch_remote_sha(repo, branch, timeout_seconds, max_retries):
-    """取得 GitHub 上最新 commit sha。不需要認證，也不需要本機裝 git。"""
+    """取得 GitHub 上最新 commit sha。不需要認證，也不需要本機裝 git。
+
+    回傳 (sha, error_message)：成功時 error_message 是 None；失敗時 sha 是 None，
+    error_message 會說明原因（連不上／GitHub API 額度用完／回應格式異常），
+    供 report 顯示，不要只留在 log 裡讓使用者看不到。
+    """
     url = "https://api.github.com/repos/{0}/commits/{1}".format(repo, branch)
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "ComfyUI-DMXAPI-SelfUpdate"}
     resp = _get_with_retry(url, headers, timeout_seconds, max_retries)
-    if resp is None or resp.status_code != 200:
-        logger.warning("[DMXAPI] 無法取得遠端版本，check_only 仍會回報本機版本。")
-        return None
+
+    if resp is None:
+        message = "無法連線 GitHub，請檢查網路。"
+        logger.warning("[DMXAPI] %s", message)
+        return None, message
+
+    if resp.status_code == 403 and resp.headers.get("X-RateLimit-Remaining") == "0":
+        message = "GitHub API 額度已用完（未登入每小時上限 60 次，同一網路的其他人共用同一額度）"
+        reset_text = _format_rate_limit_reset(resp.headers.get("X-RateLimit-Reset"))
+        if reset_text:
+            message += "，" + reset_text
+        logger.warning("[DMXAPI] %s", message)
+        return None, message
+
+    if resp.status_code != 200:
+        message = "GitHub API 回應 {0}。".format(resp.status_code)
+        logger.warning("[DMXAPI] %s", message)
+        return None, message
+
     try:
-        return resp.json()["sha"]
+        return resp.json()["sha"], None
     except (ValueError, KeyError) as error:
-        logger.warning("[DMXAPI] GitHub API 回傳格式異常：%s", error)
-        return None
+        message = "GitHub API 回傳格式異常：{0}".format(error)
+        logger.warning("[DMXAPI] %s", message)
+        return None, message
 
 
 def _state_path(package_dir):
@@ -396,11 +435,13 @@ class DMXAPI_SelfUpdate:
             install_requirements=True, timeout_seconds=20, max_retries=3):
         package_dir = os.path.dirname(os.path.abspath(__file__))
         local_sha, _source = _read_local_sha(package_dir)
-        remote_sha = _fetch_remote_sha(repo_owner_repo, branch, timeout_seconds, max_retries)
+        remote_sha, remote_error = _fetch_remote_sha(repo_owner_repo, branch, timeout_seconds, max_retries)
         update_available = bool(remote_sha) and remote_sha != local_sha
 
         if mode == "check_only" or not update_available:
-            report = _build_report(mode, local_sha, remote_sha, update_available, False)
+            report = _build_report(
+                mode, local_sha, remote_sha, update_available, False, extra=remote_error or "",
+            )
             return {
                 "ui": {"text": [report]},
                 "result": (report, update_available, False, local_sha or "", remote_sha or ""),
